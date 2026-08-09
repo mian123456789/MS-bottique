@@ -122,7 +122,7 @@ export async function POST(request: Request) {
 
       let designId = Number(body.id ?? 0);
       if (action === "createDesign") {
-        const customer = String(values.customer ?? "Maison Avenue");
+        const customer = "MS Boutique";
         let customerRow = await env.DB.prepare("SELECT id FROM customers WHERE name=?").bind(customer).first<{ id: number }>();
         if (!customerRow) customerRow = await env.DB.prepare("INSERT INTO customers (code,name) VALUES (?,?) RETURNING id").bind(`CUS-${Date.now()}`, customer).first<{ id: number }>();
         const inserted = await env.DB.prepare(`INSERT INTO designs (design_no,design_name,customer_id,brand,category,season,fabrication,fabric_name,fabric_composition,gsm,color,size_range,sample_quantity,order_quantity,production_quantity,order_date,start_date,due_date,priority,factory,remarks,status,workflow,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1) RETURNING id`).bind(designNo,designName,customerRow!.id,values.brand ?? "MS Boutique",category,values.season ?? "2026",fabrication,values.fabricName ?? fabrication,values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",Number(values.sampleQuantity ?? 0),orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",JSON.stringify(values.workflow ?? workflow),1).first<{ id: number }>();
