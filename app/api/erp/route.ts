@@ -23,6 +23,7 @@ const schema = [
 
 async function ensureSchema(db: D1) {
   await db.batch(schema.map((statement) => db.prepare(statement)));
+  await db.prepare("UPDATE designs SET category=CASE WHEN category LIKE '%Eastern%' THEN 'Eastern' WHEN category LIKE '%Formal%' THEN 'Formal' ELSE 'Western' END WHERE category NOT IN ('Eastern','Western','Formal')").run();
   const result = await db.prepare("SELECT COUNT(*) AS count FROM designs").first<{ count: number }>();
   if (Number(result?.count ?? 0) > 0) return;
 
@@ -36,11 +37,11 @@ async function ensureSchema(db: D1) {
   const customers = await db.prepare("SELECT id, code FROM customers ORDER BY id").all<{ id: number; code: string }>();
   const customerIds = Object.fromEntries(customers.results.map((c) => [c.code, c.id]));
   const demo = [
-    ["MS-10001", "Ladies Embroidered 3 Piece Suit", "CUS-001", "MS Boutique", "Eastern Wear", "Festive 2026", "Cotton Lawn", "Premium Lawn", "100% Cotton", 115, "Ivory / Maroon", "XS–XL", 5000, 5000, "2026-07-02", "2026-07-05", "2026-08-18", "High", "MS Factory Lahore", "Priority festive line", "In Production", "Stitching", 3250, 65, 0, "Sana Sheikh", "Adnan Qureshi"],
-    ["MS-10002", "Men's Premium Polo Shirt", "CUS-002", "Northline", "Menswear", "Autumn 2026", "100% Cotton Pique", "Combed Pique", "100% Cotton", 220, "Navy", "S–XXL", 8000, 8000, "2026-07-10", "2026-07-14", "2026-08-28", "Medium", "MS Factory Lahore", "Contrast collar detail", "In Production", "Cutting", 2480, 31, 0, "Usman Tariq", "Rashid Malik"],
-    ["MS-10003", "Ladies Printed Kurta", "CUS-003", "Lumière", "Eastern Wear", "Resort 2026", "Viscose", "Airflow Viscose", "100% Viscose", 140, "Sage Floral", "XS–XL", 3500, 3500, "2026-06-22", "2026-06-25", "2026-08-10", "Urgent", "MS Factory Lahore", "Gold foil print placement", "QC Inspection", "Quality Control", 3020, 86, 2, "Mehwish Noor", "Sadia Riaz"],
-    ["MS-10004", "Kids Tracksuit", "CUS-002", "Northline Kids", "Kidswear", "Winter 2026", "Fleece", "Brushed Fleece", "Cotton Polyester", 280, "Teal / Sand", "2Y–12Y", 6000, 6000, "2026-06-15", "2026-06-20", "2026-08-12", "High", "MS Factory Lahore", "Assorted size ratio", "Packing", "Packing", 5580, 93, 0, "Nadia Saleem", "Bilal Ahmed"],
-    ["MS-10005", "Women's Luxury Co-Ord Set", "CUS-001", "MS Atelier", "Western Wear", "Summer 2026", "Premium Linen", "Washed Linen", "Linen Viscose", 180, "Terracotta", "XS–L", 2500, 2500, "2026-05-12", "2026-05-18", "2026-07-25", "Medium", "MS Factory Lahore", "Completed export order", "Completed", "Dispatch", 2500, 100, 0, "Farah Ahmed", "Kamran Shah"],
+    ["MS-10001", "Ladies Embroidered 3 Piece Suit", "CUS-001", "MS Boutique", "Eastern", "Festive 2026", "Cotton Lawn", "Premium Lawn", "100% Cotton", 115, "Ivory / Maroon", "XS–XL", 5000, 5000, "2026-07-02", "2026-07-05", "2026-08-18", "High", "MS Factory Lahore", "Priority festive line", "In Production", "Stitching", 3250, 65, 0, "Sana Sheikh", "Adnan Qureshi"],
+    ["MS-10002", "Men's Premium Polo Shirt", "CUS-002", "Northline", "Western", "Autumn 2026", "100% Cotton Pique", "Combed Pique", "100% Cotton", 220, "Navy", "S–XXL", 8000, 8000, "2026-07-10", "2026-07-14", "2026-08-28", "Medium", "MS Factory Lahore", "Contrast collar detail", "In Production", "Cutting", 2480, 31, 0, "Usman Tariq", "Rashid Malik"],
+    ["MS-10003", "Ladies Printed Kurta", "CUS-003", "Lumière", "Eastern", "Resort 2026", "Viscose", "Airflow Viscose", "100% Viscose", 140, "Sage Floral", "XS–XL", 3500, 3500, "2026-06-22", "2026-06-25", "2026-08-10", "Urgent", "MS Factory Lahore", "Gold foil print placement", "QC Inspection", "Quality Control", 3020, 86, 2, "Mehwish Noor", "Sadia Riaz"],
+    ["MS-10004", "Kids Tracksuit", "CUS-002", "Northline Kids", "Western", "Winter 2026", "Fleece", "Brushed Fleece", "Cotton Polyester", 280, "Teal / Sand", "2Y–12Y", 6000, 6000, "2026-06-15", "2026-06-20", "2026-08-12", "High", "MS Factory Lahore", "Assorted size ratio", "Packing", "Packing", 5580, 93, 0, "Nadia Saleem", "Bilal Ahmed"],
+    ["MS-10005", "Women's Luxury Co-Ord Set", "CUS-001", "MS Atelier", "Western", "Summer 2026", "Premium Linen", "Washed Linen", "Linen Viscose", 180, "Terracotta", "XS–L", 2500, 2500, "2026-05-12", "2026-05-18", "2026-07-25", "Medium", "MS Factory Lahore", "Completed export order", "Completed", "Dispatch", 2500, 100, 0, "Farah Ahmed", "Kamran Shah"],
     ["MS-10006", "Embellished Formal Kaftan", "CUS-003", "Lumière", "Formal", "Festive 2026", "Silk Crepe", "Silk Crepe", "Viscose Silk", 125, "Midnight Blue", "S–XL", 1800, 1800, "2026-07-18", "2026-07-22", "2026-08-07", "Urgent", "MS Factory Lahore", "Hand embellishment bottleneck", "Delayed", "Embroidery", 720, 40, 3, "Amna Siddiqui", "Javed Iqbal"],
   ];
   for (const row of demo) {
@@ -105,11 +106,13 @@ export async function POST(request: Request) {
       const values = (body.values ?? {}) as Record<string, unknown>;
       const designNo = String(values.designNo ?? "").trim().toUpperCase();
       const designName = String(values.designName ?? "").trim();
+      const category = String(values.category ?? "").trim();
       const fabrication = String(values.fabrication ?? "").trim();
       const orderQty = Number(values.orderQuantity);
       const productionQty = Number(values.productionQuantity || orderQty);
       if (!designNo) return error("Error: Design No. is required.");
       if (!designName) return error("Error: Design Name is required.");
+      if (!["Eastern", "Western", "Formal"].includes(category)) return error("Error: Category must be Eastern, Western or Formal.");
       if (!fabrication) return error("Error: Please select Fabrication.");
       if (!Number.isFinite(orderQty) || orderQty <= 0) return error("Error: Quantity must be greater than 0.");
       if (productionQty > orderQty || productionQty <= 0) return error("Error: Production quantity must be between 1 and order quantity.");
@@ -122,13 +125,13 @@ export async function POST(request: Request) {
         const customer = String(values.customer ?? "Maison Avenue");
         let customerRow = await env.DB.prepare("SELECT id FROM customers WHERE name=?").bind(customer).first<{ id: number }>();
         if (!customerRow) customerRow = await env.DB.prepare("INSERT INTO customers (code,name) VALUES (?,?) RETURNING id").bind(`CUS-${Date.now()}`, customer).first<{ id: number }>();
-        const inserted = await env.DB.prepare(`INSERT INTO designs (design_no,design_name,customer_id,brand,category,season,fabrication,fabric_name,fabric_composition,gsm,color,size_range,sample_quantity,order_quantity,production_quantity,order_date,start_date,due_date,priority,factory,remarks,status,workflow,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1) RETURNING id`).bind(designNo,designName,customerRow!.id,values.brand ?? "MS Boutique",values.category ?? "Apparel",values.season ?? "2026",fabrication,values.fabricName ?? fabrication,values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",Number(values.sampleQuantity ?? 0),orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",JSON.stringify(values.workflow ?? workflow),1).first<{ id: number }>();
+        const inserted = await env.DB.prepare(`INSERT INTO designs (design_no,design_name,customer_id,brand,category,season,fabrication,fabric_name,fabric_composition,gsm,color,size_range,sample_quantity,order_quantity,production_quantity,order_date,start_date,due_date,priority,factory,remarks,status,workflow,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1) RETURNING id`).bind(designNo,designName,customerRow!.id,values.brand ?? "MS Boutique",category,values.season ?? "2026",fabrication,values.fabricName ?? fabrication,values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",Number(values.sampleQuantity ?? 0),orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",JSON.stringify(values.workflow ?? workflow),1).first<{ id: number }>();
         designId = inserted!.id;
         await env.DB.prepare("INSERT INTO production_orders (design_id,current_department,current_department_id,order_qty,completed_qty,pending_qty,progress,status,assigned_employee,supervisor) VALUES (?,'Design',(SELECT id FROM departments WHERE name='Design'),?,0,?,5,?,'Unassigned','Unassigned')").bind(designId,orderQty,orderQty,values.status ?? "Approved").run();
       } else {
         const old = await env.DB.prepare("SELECT * FROM designs WHERE id=?").bind(designId).first();
         if (!old) return error("Error: Design record not found.", 404);
-        await env.DB.prepare(`UPDATE designs SET design_no=?, design_name=?, fabrication=?, fabric_name=?, fabric_composition=?, gsm=?, color=?, size_range=?, order_quantity=?, production_quantity=?, order_date=?, start_date=?, due_date=?, priority=?, factory=?, remarks=?, status=?, updated_by=1, updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(designNo,designName,fabrication,values.fabricName ?? "",values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",designId).run();
+        await env.DB.prepare(`UPDATE designs SET design_no=?, design_name=?, category=?, fabrication=?, fabric_name=?, fabric_composition=?, gsm=?, color=?, size_range=?, order_quantity=?, production_quantity=?, order_date=?, start_date=?, due_date=?, priority=?, factory=?, remarks=?, status=?, updated_by=1, updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(designNo,designName,category,fabrication,values.fabricName ?? "",values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",designId).run();
         await env.DB.prepare("UPDATE production_orders SET order_qty=?, pending_qty=MAX(0,?-completed_qty), status=?, updated_at=CURRENT_TIMESTAMP WHERE design_id=?").bind(orderQty,orderQty,values.status ?? "Approved",designId).run();
         await env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,old_value,new_value,ip_address,device) VALUES (1,?,'UPDATE','design',?,?,?,'192.168.10.24','Web / Chrome')").bind(designId,String(designId),JSON.stringify(old),JSON.stringify(values)).run();
       }
