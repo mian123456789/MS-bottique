@@ -1,0 +1,388 @@
+"use client";
+
+import {
+  AlertTriangle, ArrowRight, Bell, Boxes, CalendarDays, Check, CheckCircle2,
+  ChevronDown, ChevronRight, Circle, ClipboardPlus, Download, Eye, Factory,
+  FileBarChart, FileText, Filter, Flower2, LayoutDashboard, LoaderCircle, LockKeyhole,
+  LogOut, Mail, Menu, MoreHorizontal, PackageCheck, PackageOpen, Palette, Pencil,
+  Plus, Printer, Route, Scissors, Search, Send, Settings, ShieldCheck, Shirt,
+  Sparkles, Truck, UserCog, Users, Warehouse as WarehouseIcon, X,
+} from "lucide-react";
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+
+type Row = Record<string, string | number | boolean | null>;
+type FactoryState = {
+  lots: Row[];
+  sizes: Row[];
+  records: Record<string, Row[]>;
+  warehouse: Row[];
+  receipts: Row[];
+  dispatches: Row[];
+  transfers: Row[];
+  remarks: Row[];
+  history: Row[];
+  audits: Row[];
+  customers: Row[];
+  designs: Row[];
+  notifications: Row[];
+};
+
+const emptyState: FactoryState = {
+  lots: [], sizes: [], records: {}, warehouse: [], receipts: [], dispatches: [],
+  transfers: [], remarks: [], history: [], audits: [], customers: [], designs: [], notifications: [],
+};
+
+const workflow = ["Issue Lot", "Embroidery", "Cutting", "Stitching", "Finishing", "Packing", "Warehouse", "Customer Dispatch"];
+const departmentPages = ["Embroidery", "Cutting", "Stitching", "Finishing", "Packing"];
+const number = (value: unknown) => Number(value ?? 0);
+const fmt = (value: unknown) => number(value).toLocaleString("en-US");
+const formatDate = (value: unknown, withTime = false) => {
+  if (!value) return "—";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en-GB", withTime ? { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" } : { day: "2-digit", month: "short", year: "numeric" }).format(date);
+};
+
+const nav = [
+  { label: "Dashboard", icon: LayoutDashboard },
+  { label: "Issue Lot", icon: ClipboardPlus },
+  { label: "Lot Progress", icon: Route },
+  { label: "Embroidery", icon: Flower2 },
+  { label: "Cutting", icon: Scissors },
+  { label: "Stitching", icon: Shirt },
+  { label: "Finishing", icon: Sparkles },
+  { label: "Packing", icon: PackageCheck },
+  { label: "Warehouse", icon: WarehouseIcon },
+  { label: "Customer Dispatch", icon: Truck },
+  { section: "MASTER DATA" },
+  { label: "Designs", icon: Palette },
+  { label: "Customers", icon: Users },
+  { label: "Inventory", icon: Boxes },
+  { label: "Reports", icon: FileBarChart },
+  { section: "ADMINISTRATION" },
+  { label: "Employees", icon: UserCog },
+  { label: "Users & Permissions", icon: ShieldCheck },
+  { label: "Notifications", icon: Bell },
+  { label: "Audit Logs", icon: FileText },
+  { label: "Settings", icon: Settings },
+];
+
+function cx(...classes: Array<string | false | null | undefined>) { return classes.filter(Boolean).join(" "); }
+
+function StatusBadge({ status }: { status: unknown }) {
+  const value = String(status || "Waiting");
+  const tone = /completed|delivered|in stock|dispatched/i.test(value) && !/partially/i.test(value) ? "success" : /running|progress|received|warehouse|ready/i.test(value) ? "info" : /hold|delay|rejected|error/i.test(value) ? "danger" : /partial|rework|packing/i.test(value) ? "warning" : "neutral";
+  return <span className={`status status-${tone}`}><span className="status-dot" />{value}</span>;
+}
+
+function Progress({ value, compact = false }: { value: number; compact?: boolean }) {
+  const safe = Math.max(0, Math.min(100, Math.round(value)));
+  return <div className={cx("progress-wrap", compact && "compact")}><div className="progress-track"><span style={{ width: `${safe}%` }} /></div><b>{safe}%</b></div>;
+}
+
+function Modal({ title, subtitle, children, onClose, wide = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <section className={cx("modal", wide && "modal-wide")} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header className="modal-header"><div><h2 id="modal-title">{title}</h2>{subtitle && <p>{subtitle}</p>}</div><button className="icon-button" onClick={onClose} aria-label="Close dialog" title="Close"><X size={19} /></button></header>
+      <div className="modal-body">{children}</div>
+    </section>
+  </div>;
+}
+
+function Field({ label, error, children, span = false }: { label: string; error?: string; children: ReactNode; span?: boolean }) {
+  return <label className={cx("field", span && "field-span")}><span>{label}</span>{children}{error && <small className="field-error"><AlertTriangle size={13} />{error}</small>}</label>;
+}
+
+function Empty({ title, detail }: { title: string; detail: string }) {
+  return <div className="empty-state"><div><PackageOpen size={27} /></div><h3>{title}</h3><p>{detail}</p></div>;
+}
+
+function Login({ onLogin }: { onLogin: () => void }) {
+  const [email, setEmail] = useState("admin@msboutique.com");
+  const [password, setPassword] = useState("admin123");
+  const [error, setError] = useState("");
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (email.toLowerCase() !== "admin@msboutique.com" || password !== "admin123") return setError("Incorrect email or password. Use the demo credentials shown below.");
+    onLogin();
+  };
+  return <main className="login-page">
+    <section className="login-brand">
+      <div className="brand-pill"><span className="logo-mark">MS</span><span>MS Boutique</span></div>
+      <div className="login-copy"><span className="eyebrow light">FACTORY OPERATIONS, CONNECTED</span><h1>One design.<br />Every department.<br /><em>Complete control.</em></h1><p>Track every production lot from issue to customer dispatch without losing a single piece.</p></div>
+      <div className="workflow-ribbon">{workflow.slice(0, 7).map((item, index) => <span key={item}>{item}{index < 6 && <ArrowRight size={14} />}</span>)}</div>
+    </section>
+    <section className="login-panel">
+      <form className="login-card" onSubmit={submit}>
+        <div className="mobile-login-brand"><span className="logo-mark">MS</span><b>MS Boutique</b></div>
+        <span className="eyebrow">WELCOME BACK</span><h2>Factory sign in</h2><p className="muted">Access the Lot & Production Tracking System.</p>
+        <Field label="Email address"><div className="input-icon"><Mail size={17} /><input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setError(""); }} /></div></Field>
+        <Field label="Password"><div className="input-icon"><LockKeyhole size={17} /><input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(""); }} /></div></Field>
+        {error && <div className="login-error"><AlertTriangle size={16} />{error}</div>}
+        <button className="button primary login-button" type="submit">Sign in to Dashboard <ArrowRight size={17} /></button>
+        <div className="demo-credentials"><span>Demo access</span><b>admin@msboutique.com</b><b>admin123</b></div>
+      </form>
+      <p className="login-footer">MS Boutique © 2026 – Factory Management System</p>
+    </section>
+  </main>;
+}
+
+export default function FactoryApp() {
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [page, setPage] = useState("Dashboard");
+  const [state, setState] = useState<FactoryState>(emptyState);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [sidebar, setSidebar] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [modal, setModal] = useState<{ type: string; lot?: Row; department?: string } | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/factory");
+      const data = await response.json() as FactoryState & { error?: string };
+      if (!response.ok) throw new Error(data.error || "Unable to load data.");
+      setState(data);
+    } catch (error) { setToast({ type: "error", text: error instanceof Error ? error.message : "Unable to load data." }); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { if (loggedIn) void load(); }, [loggedIn]);
+  useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(null), 3600); return () => clearTimeout(id); }, [toast]);
+
+  const post = async (payload: Record<string, unknown>) => {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/factory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await response.json() as { error?: string; message?: string; state?: FactoryState };
+      if (!response.ok) throw new Error(data.error || "Unable to save this change.");
+      if (data.state) setState(data.state);
+      setToast({ type: "success", text: data.message || "Saved successfully." });
+      setModal(null);
+      return true;
+    } catch (error) { setToast({ type: "error", text: error instanceof Error ? error.message : "Unable to save this change." }); return false; }
+    finally { setSaving(false); }
+  };
+
+  const filteredGlobal = useMemo(() => {
+    if (!globalSearch.trim()) return [];
+    const query = globalSearch.toLowerCase();
+    return state.lots.filter((lot) => String(lot.lot_no).toLowerCase().includes(query) || String(lot.design_no).toLowerCase().includes(query)).slice(0, 5);
+  }, [globalSearch, state.lots]);
+
+  if (!loggedIn) return <Login onLogin={() => setLoggedIn(true)} />;
+
+  const openPage = (value: string) => { setPage(value); setSidebar(false); setGlobalSearch(""); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const pageProps = { state, post, saving, setModal, openPage };
+
+  return <div className="app-shell">
+    <aside className={cx("sidebar", sidebar && "sidebar-open")}>
+      <div className="sidebar-brand"><span className="logo-mark">MS</span><div><b>MS Boutique</b><small>Factory Management</small></div><button className="sidebar-close" onClick={() => setSidebar(false)} aria-label="Close navigation"><X size={19} /></button></div>
+      <nav className="nav-list">
+        {nav.map((item, index) => item.section ? <div className="nav-section" key={`${item.section}-${index}`}>{item.section}</div> : <button key={item.label} className={cx("nav-item", page === item.label && "active")} onClick={() => openPage(String(item.label))}>{item.icon && <item.icon size={18} strokeWidth={1.8} />}<span>{item.label}</span>{page === item.label && <span className="active-notch" />}</button>)}
+      </nav>
+      <div className="sidebar-user"><div className="avatar">AK</div><div><b>Ayesha Khan</b><span>Super Admin</span></div><button title="Log out" aria-label="Log out" onClick={() => setLoggedIn(false)}><LogOut size={18} /></button></div>
+    </aside>
+    {sidebar && <button className="sidebar-scrim" onClick={() => setSidebar(false)} aria-label="Close navigation" />}
+    <div className="main-shell">
+      <header className="topbar">
+        <div className="topbar-left"><button className="menu-button" onClick={() => setSidebar(true)} aria-label="Open navigation"><Menu /></button><div><h1>{page}</h1><p>{page === "Dashboard" ? "Lot & Production Tracking System" : page === "Lot Progress" ? "Track every piece across the factory floor" : `MS Boutique • ${page}`}</p></div></div>
+        <div className="topbar-actions">
+          <div className="global-search"><Search size={17} /><input aria-label="Search lot or design" placeholder="Search lot or design…" value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)} />{globalSearch && <button onClick={() => setGlobalSearch("")} aria-label="Clear search"><X size={15} /></button>}
+            {globalSearch && <div className="search-results">{filteredGlobal.length ? filteredGlobal.map((lot) => <button key={String(lot.id)} onClick={() => { setGlobalSearch(""); setModal({ type: "detail", lot }); }}><span><b>{String(lot.design_no)}</b><small>{String(lot.lot_no)} · {String(lot.fabrication)}</small></span><StatusBadge status={lot.current_department} /></button>) : <p>No matching lots</p>}</div>}
+          </div>
+          <button className="icon-button notification-button" title="Notifications" aria-label="Notifications" onClick={() => openPage("Notifications")}><Bell size={19} /><span>{state.notifications.length}</span></button>
+          <button className="profile-button" onClick={() => openPage("Users & Permissions")}><span className="avatar">AK</span><span><b>Ayesha Khan</b><small>Super Admin</small></span><ChevronDown size={15} /></button>
+        </div>
+      </header>
+      <main className="content">
+        {loading ? <LoadingView /> : <>
+          {page === "Dashboard" && <Dashboard {...pageProps} />}
+          {page === "Issue Lot" && <IssueLot {...pageProps} />}
+          {page === "Lot Progress" && <LotProgress {...pageProps} />}
+          {departmentPages.includes(page) && <DepartmentPage {...pageProps} department={page} />}
+          {page === "Warehouse" && <WarehousePage {...pageProps} />}
+          {page === "Customer Dispatch" && <DispatchPage {...pageProps} />}
+          {page === "Reports" && <ReportsPage {...pageProps} />}
+          {["Designs", "Customers", "Inventory"].includes(page) && <MasterDataPage {...pageProps} page={page} />}
+          {["Employees", "Users & Permissions", "Notifications", "Audit Logs", "Settings"].includes(page) && <AdminPage {...pageProps} page={page} />}
+        </>}
+      </main>
+      <footer>MS Boutique © 2026 – Factory Management System</footer>
+    </div>
+    {toast && <div className={cx("toast", toast.type)}>{toast.type === "success" ? <CheckCircle2 size={19} /> : <AlertTriangle size={19} />}<span>{toast.text}</span><button onClick={() => setToast(null)} aria-label="Dismiss notification"><X size={15} /></button></div>}
+    {modal?.type === "new-lot" && <NewLotModal onClose={() => setModal(null)} onSave={post} saving={saving} state={state} />}
+    {modal?.type === "detail" && modal.lot && <LotDetail lot={modal.lot} state={state} onClose={() => setModal(null)} setModal={setModal} />}
+    {modal?.type === "edit-lot" && modal.lot && <EditLotModal lot={modal.lot} onClose={() => setModal(null)} onSave={post} saving={saving} />}
+    {modal?.type === "production" && modal.lot && modal.department && <ProductionModal lot={modal.lot} department={modal.department} state={state} onClose={() => setModal(null)} onSave={post} saving={saving} />}
+    {modal?.type === "transfer" && modal.lot && modal.department && <TransferModal lot={modal.lot} department={modal.department} state={state} onClose={() => setModal(null)} onSave={post} saving={saving} />}
+    {modal?.type === "remark" && modal.lot && <RemarkModal lot={modal.lot} department={modal.department || String(modal.lot.current_department)} onClose={() => setModal(null)} onSave={post} saving={saving} />}
+    {modal?.type === "dispatch" && modal.lot && <DispatchModal lot={modal.lot} state={state} onClose={() => setModal(null)} onSave={post} saving={saving} />}
+  </div>;
+}
+
+type PageProps = { state: FactoryState; post: (payload: Record<string, unknown>) => Promise<boolean>; saving: boolean; setModal: (value: { type: string; lot?: Row; department?: string } | null) => void; openPage: (page: string) => void };
+
+function LoadingView() { return <div className="loading-view"><LoaderCircle className="spin" size={30} /><h2>Preparing the factory floor…</h2><p>Loading live lots, quantities and department activity.</p></div>; }
+
+function Dashboard({ state, setModal, openPage }: PageProps) {
+  const totalQty = state.lots.reduce((sum, lot) => sum + number(lot.quantity), 0);
+  const active = state.lots.filter((lot) => !/Delivered|Dispatched/i.test(String(lot.status))).length;
+  const warehouseStock = state.warehouse.reduce((sum, row) => sum + number(row.balance_qty), 0);
+  const delayed = state.lots.filter((lot) => new Date(String(lot.required_delivery_date)) < new Date("2026-08-09") && !/Delivered|Dispatched/i.test(String(lot.status))).length;
+  const cards = [
+    { label: "Active Lots", value: active, detail: `${state.lots.length} total issued`, icon: Route, tone: "green" },
+    { label: "Production QTY", value: fmt(totalQty), detail: "Across active orders", icon: Factory, tone: "blue" },
+    { label: "Stitching Running", value: state.records.Stitching?.filter((r) => /Running|Progress/i.test(String(r.status))).length || 0, detail: "Live production lines", icon: Shirt, tone: "purple" },
+    { label: "Warehouse Stock", value: fmt(warehouseStock), detail: "Finished goods PCS", icon: WarehouseIcon, tone: "teal" },
+    { label: "Ready to Dispatch", value: state.warehouse.filter((r) => number(r.balance_qty) > 0).length, detail: "Customer orders", icon: Truck, tone: "orange" },
+    { label: "Delayed Lots", value: delayed, detail: delayed ? "Needs attention" : "All on schedule", icon: AlertTriangle, tone: "red" },
+  ];
+  const deptData = workflow.slice(1, 7).map((department) => ({ department, count: state.lots.filter((lot) => lot.current_department === department).length, qty: state.lots.filter((lot) => lot.current_department === department).reduce((sum, lot) => sum + number(lot.quantity), 0) }));
+  const maxQty = Math.max(...deptData.map((item) => item.qty), 1);
+  return <div className="page-stack">
+    <section className="dashboard-hero"><div><span className="eyebrow light">SUNDAY, 09 AUGUST 2026</span><h2>Good afternoon, Ayesha.</h2><p>Here’s what’s moving across your factory today.</p></div><button className="button light" onClick={() => setModal({ type: "new-lot" })}><Plus size={17} /> Issue New Lot</button></section>
+    <section className="metric-grid">{cards.map((card) => <article className="metric-card" key={card.label}><div className={`metric-icon ${card.tone}`}><card.icon size={20} /></div><div><span>{card.label}</span><strong>{card.value}</strong><small>{card.detail}</small></div></article>)}</section>
+    <section className="dashboard-grid">
+      <article className="panel chart-panel"><div className="panel-head"><div><span className="eyebrow">PRODUCTION OVERVIEW</span><h3>Department-wise production</h3></div><select aria-label="Chart period"><option>This week</option><option>This month</option></select></div>
+        <div className="bar-chart">{deptData.map((item) => <div className="bar-group" key={item.department}><div className="bar-value">{item.qty ? `${Math.round(item.qty / 100) / 10}k` : "0"}</div><div className="bar-track"><span style={{ height: `${Math.max(7, item.qty / maxQty * 100)}%` }} /></div><small>{item.department.slice(0, 4)}</small></div>)}</div>
+        <div className="chart-legend"><span><i className="legend-green" />Active production qty</span><b>{fmt(totalQty)} PCS</b></div>
+      </article>
+      <article className="panel location-panel"><div className="panel-head"><div><span className="eyebrow">LIVE LOCATION</span><h3>Current lot location</h3></div><button className="link-button" onClick={() => openPage("Lot Progress")}>View all <ArrowRight size={14} /></button></div>
+        <div className="donut-row"><div className="donut" style={{ background: "conic-gradient(#13a47a 0 32%, #3968e8 32% 56%, #8b5cf6 56% 74%, #f59e0b 74% 88%, #d9dee8 88% 100%)" }}><span><b>{state.lots.length}</b><small>LOTS</small></span></div><div className="donut-legend">{deptData.filter((item) => item.count).map((item, index) => <div key={item.department}><i className={`dot dot-${index}`} /><span>{item.department}</span><b>{item.count}</b></div>)}</div></div>
+      </article>
+    </section>
+    <section className="dashboard-grid lower">
+      <article className="panel live-panel"><div className="panel-head"><div><span className="eyebrow">FACTORY FLOOR</span><h3>Live lot progress</h3></div><span className="live-indicator"><i /> Live</span></div>
+        <div className="live-lots">{state.lots.slice(0, 4).map((lot) => <button key={String(lot.id)} onClick={() => setModal({ type: "detail", lot })}><div className="lot-monogram">{String(lot.design_no).slice(-2)}</div><div className="live-lot-copy"><b>{String(lot.design_no)} <span>/ {String(lot.lot_no)}</span></b><small>{fmt(lot.quantity)} PCS · Current: {String(lot.current_department)}</small><Progress value={lotProgress(lot)} compact /></div><ChevronRight size={18} /></button>)}</div>
+      </article>
+      <article className="panel activity-panel"><div className="panel-head"><div><span className="eyebrow">ACTIVITY</span><h3>Recent movements</h3></div><button className="more-button" aria-label="More activity" title="More activity"><MoreHorizontal /></button></div><ActivityList rows={state.history.slice(0, 5)} /></article>
+    </section>
+  </div>;
+}
+
+function ActivityList({ rows }: { rows: Row[] }) { return <div className="activity-list">{rows.map((row, index) => <div className="activity-item" key={`${row.id}-${index}`}><span className={cx("activity-mark", index === 0 && "active")}><Check size={12} /></span><div><b>{String(row.action)}</b><p>{String(row.remarks || row.department || "Factory activity")}</p><small>{formatDate(row.created_at, true)} · {String(row.user_name || "Ayesha Khan")}</small></div>{number(row.quantity) > 0 && <em>{fmt(row.quantity)} PCS</em>}</div>)}</div>; }
+
+function SectionHead({ eyebrow, title, detail, action }: { eyebrow?: string; title: string; detail: string; action?: ReactNode }) { return <div className="section-head"><div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2><p>{detail}</p></div>{action}</div>; }
+
+function IssueLot({ state, setModal }: PageProps) {
+  const issueLots = state.lots.filter((lot) => lot.current_department === "Issue Lot" || state.transfers.some((transfer) => number(transfer.lot_id) === number(lot.id) && number(transfer.from_department_id) === 1));
+  return <div className="page-stack"><SectionHead eyebrow="PRODUCTION START" title="Issue Lot" detail="Every factory order begins here with a controlled, traceable lot." action={<button className="button primary" onClick={() => setModal({ type: "new-lot" })}><Plus size={17} /> Issue New Lot</button>} />
+    <div className="workflow-banner"><div className="workflow-label"><ClipboardPlus size={20} /><span><b>Strict factory workflow</b><small>Lots move only after an authorized transfer.</small></span></div><div className="mini-flow">{workflow.map((item, index) => <span key={item} className={index === 0 ? "active" : ""}>{index + 1}. {item}{index < workflow.length - 1 && <ChevronRight size={13} />}</span>)}</div></div>
+    <article className="panel table-panel"><div className="panel-head"><div><span className="eyebrow">ISSUED LOTS</span><h3>Lot register</h3></div><span className="record-count">{issueLots.length} records</span></div><div className="table-scroll"><table><thead><tr><th>Lot / Design</th><th>Fabrication</th><th>Customer</th><th>QTY</th><th>Issue Date</th><th>Priority</th><th>Status</th><th className="right">Action</th></tr></thead><tbody>{issueLots.map((lot) => <tr key={String(lot.id)}><td><button className="table-primary" onClick={() => setModal({ type: "detail", lot })}>{String(lot.lot_no)}<small>{String(lot.design_no)}</small></button></td><td>{String(lot.fabrication)}<small className="cell-sub">Sizes {String(lot.size_range)}</small></td><td>{String(lot.customer)}</td><td><b>{fmt(lot.quantity)}</b> PCS</td><td>{formatDate(lot.issue_date)}</td><td><span className={`priority ${String(lot.priority).toLowerCase()}`}>{String(lot.priority)}</span></td><td><StatusBadge status={lot.status} /></td><td className="right"><div className="row-actions"><button title="Edit lot" aria-label="Edit lot" onClick={() => setModal({ type: "edit-lot", lot })}><Pencil size={16} /></button>{lot.current_department === "Issue Lot" && <button className="table-action" onClick={() => setModal({ type: "transfer", lot, department: "Issue Lot" })}>To Embroidery <ArrowRight size={14} /></button>}</div></td></tr>)}</tbody></table></div></article>
+  </div>;
+}
+
+function FilterBar({ search, setSearch, department, setDepartment, status, setStatus, customer, setCustomer, state }: { search: string; setSearch: (v: string) => void; department: string; setDepartment: (v: string) => void; status: string; setStatus: (v: string) => void; customer: string; setCustomer: (v: string) => void; state: FactoryState }) {
+  return <div className="filter-bar"><div className="filter-search"><Search size={17} /><input placeholder="Search Design No. or Lot No." value={search} onChange={(e) => setSearch(e.target.value)} /></div><div className="select-wrap"><Filter size={15} /><select value={department} onChange={(e) => setDepartment(e.target.value)}><option value="">All departments</option>{workflow.map((item) => <option key={item}>{item}</option>)}</select></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option>{["Waiting","In Progress","Running","Partially Completed","Completed","Hold","Rework","Ready for Dispatch","Dispatched"].map((item) => <option key={item}>{item}</option>)}</select><select value={customer} onChange={(e) => setCustomer(e.target.value)}><option value="">All customers</option>{state.customers.map((item) => <option key={String(item.id)}>{String(item.name)}</option>)}</select>{(search || department || status || customer) && <button className="clear-filters" onClick={() => { setSearch(""); setDepartment(""); setStatus(""); setCustomer(""); }}><X size={14} /> Clear</button>}</div>;
+}
+
+function LotProgress({ state, setModal }: PageProps) {
+  const [search, setSearch] = useState(""); const [department, setDepartment] = useState(""); const [status, setStatus] = useState(""); const [customer, setCustomer] = useState("");
+  const rows = state.lots.filter((lot) => (!search || `${lot.lot_no} ${lot.design_no} ${lot.fabrication}`.toLowerCase().includes(search.toLowerCase())) && (!department || lot.current_department === department) && (!status || String(lot.status).includes(status)) && (!customer || lot.customer === customer));
+  return <div className="page-stack"><SectionHead eyebrow="CONTROL TOWER" title="Lot Progress / Production Tracking" detail="One live view of every design, quantity and department handoff." action={<div className="action-group"><button className="button secondary" onClick={() => exportRows(rows, "MS-Boutique-Lot-Progress")}><Download size={16} /> Export Excel</button><button className="button secondary" onClick={() => window.print()}><Printer size={16} /> Print / PDF</button></div>} />
+    <FilterBar {...{ search, setSearch, department, setDepartment, status, setStatus, customer, setCustomer, state }} />
+    <article className="panel table-panel tracking-table"><div className="panel-head compact"><span><b>{rows.length}</b> production lots</span><span className="updated-label"><span className="live-dot" /> Live quantities · Updated just now</span></div><div className="table-scroll"><table><thead><tr><th>Lot / Design</th><th>Fabrication</th><th>QTY</th><th>Current Department</th><th>Status</th><th>Completed / Pending</th><th>Progress</th><th>Required Date</th><th>Remarks</th><th>Actions</th></tr></thead><tbody>{rows.map((lot) => <tr key={String(lot.id)}><td><button className="table-primary" onClick={() => setModal({ type: "detail", lot })}>{String(lot.lot_no)}<small>{String(lot.design_no)} · {String(lot.size_range)}</small></button></td><td>{String(lot.fabrication)}<small className="cell-sub">{String(lot.customer)}</small></td><td><b>{fmt(lot.quantity)}</b><small className="cell-sub">PCS</small></td><td><span className="department-chip">{departmentIcon(String(lot.current_department))}{String(lot.current_department)}</span></td><td><StatusBadge status={lot.status} /></td><td><b>{fmt(lot.completed_qty)}</b><small className="cell-sub">{fmt(Math.max(0, number(lot.quantity) - number(lot.completed_qty)))} pending</small></td><td><Progress value={lotProgress(lot)} compact /></td><td>{formatDate(lot.required_delivery_date)}</td><td><span className="remarks-cell" title={String(lot.remarks)}>{String(lot.remarks)}</span></td><td><div className="row-actions"><button title="View full history" aria-label="View full history" onClick={() => setModal({ type: "detail", lot })}><Eye size={16} /></button><button title="Edit lot" aria-label="Edit lot" onClick={() => setModal({ type: "edit-lot", lot })}><Pencil size={16} /></button><button title="Add remark" aria-label="Add remark" onClick={() => setModal({ type: "remark", lot })}><FileText size={16} /></button></div></td></tr>)}</tbody></table></div>{!rows.length && <Empty title="No production lots found" detail="Try clearing a filter or search for a different Design No." />}</article>
+  </div>;
+}
+
+function departmentIcon(department: string) { const Icon = department === "Embroidery" ? Flower2 : department === "Cutting" ? Scissors : department === "Stitching" ? Shirt : department === "Finishing" ? Sparkles : department === "Packing" ? PackageCheck : department === "Warehouse" ? WarehouseIcon : department === "Customer Dispatch" ? Truck : ClipboardPlus; return <Icon size={15} />; }
+function lotProgress(lot: Row) { const index = Math.max(0, workflow.indexOf(String(lot.current_department))); const phase = index / (workflow.length - 1) * 100; const within = number(lot.quantity) ? number(lot.completed_qty) / number(lot.quantity) * (100 / (workflow.length - 1)) : 0; return Math.min(100, phase + within); }
+
+function DepartmentPage({ state, department, setModal }: PageProps & { department: string }) {
+  const [search, setSearch] = useState(""); const [status, setStatus] = useState("");
+  const records = (state.records[department] || []).map((record) => ({ ...record, lot: state.lots.find((lot) => number(lot.id) === number(record.lot_id)) }) as Row & { lot?: Row }).filter((item) => item.lot && (!search || `${item.lot.lot_no} ${item.lot.design_no}`.toLowerCase().includes(search.toLowerCase())) && (!status || item.status === status));
+  const received = records.reduce((sum, item) => sum + number(item.received_qty), 0); const completed = records.reduce((sum, item) => sum + number(item.completed_qty), 0); const pending = Math.max(0, received - completed);
+  const next = workflow[workflow.indexOf(department) + 1];
+  return <div className="page-stack"><SectionHead eyebrow="DEPARTMENT WORKBENCH" title={`${department} Department`} detail={`Receive incoming lots, record production and transfer verified quantities to ${next}.`} action={<div className="department-kpi"><span>{records.length}<small>LOTS</small></span><span>{fmt(pending)}<small>PENDING PCS</small></span></div>} />
+    <section className="dept-summary"><article><span>Received quantity</span><b>{fmt(received)} <small>PCS</small></b><div className="micro-line blue"><i style={{ width: "100%" }} /></div></article><article><span>Completed quantity</span><b>{fmt(completed)} <small>PCS</small></b><div className="micro-line green"><i style={{ width: `${received ? completed / received * 100 : 0}%` }} /></div></article><article><span>Pending production</span><b>{fmt(pending)} <small>PCS</small></b><div className="micro-line orange"><i style={{ width: `${received ? pending / received * 100 : 0}%` }} /></div></article><article><span>Efficiency / yield</span><b>{received ? Math.round(completed / received * 100) : 0}<small>%</small></b><Progress value={received ? completed / received * 100 : 0} compact /></article></section>
+    <div className="filter-bar department-filter"><div className="filter-search"><Search size={17} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search lot or design…" /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option>{["Waiting","Received","In Progress","Running","Partially Completed","Completed","Hold","Rework"].map((item) => <option key={item}>{item}</option>)}</select></div>
+    <div className="department-records">{records.map((item) => { const lot = item.lot as Row; const available = number(item.completed_qty) - number(item.transferred_qty); return <article className="dept-card" key={String(item.id)}><div className="dept-card-head"><div className="lot-monogram">{String(lot.design_no).slice(-2)}</div><div><button onClick={() => setModal({ type: "detail", lot })}>{String(lot.design_no)} <span>/ {String(lot.lot_no)}</span></button><p>{String(lot.fabrication)} · {String(lot.size_range)} · {String(lot.customer)}</p></div><StatusBadge status={item.status} /></div><div className="quantity-grid"><span><small>Received</small><b>{fmt(item.received_qty)}</b></span><span><small>{department === "Finishing" || department === "Cutting" ? "Passed" : department === "Packing" ? "Packed" : "Completed"}</small><b>{fmt(item.completed_qty)}</b></span><span><small>Rejected</small><b className="red-text">{fmt(item.rejected_qty)}</b></span><span><small>Rework</small><b className="orange-text">{fmt(item.rework_qty)}</b></span><span><small>Pending</small><b>{fmt(Math.max(0, number(item.received_qty) - number(item.completed_qty)))}</b></span><span><small>Available to transfer</small><b className="green-text">{fmt(available)}</b></span></div><div className="dept-progress"><div><span>Production progress</span><b>{Math.round(number(item.completed_qty) / Math.max(1, number(item.received_qty)) * 100)}%</b></div><Progress value={number(item.completed_qty) / Math.max(1, number(item.received_qty)) * 100} /></div>{item.remarks && <p className="dept-remark"><FileText size={14} />{String(item.remarks)}</p>}<div className="dept-card-actions"><button className="button ghost" onClick={() => setModal({ type: "remark", lot, department })}><FileText size={15} /> Add Remark</button>{item.status === "Waiting" && <button className="button secondary" onClick={() => setModal({ type: "production", lot, department })}>Receive & Update</button>}{item.status !== "Waiting" && <button className="button secondary" onClick={() => setModal({ type: "production", lot, department })}><Pencil size={15} /> Update Production</button>}<button className="button primary" disabled={available <= 0} onClick={() => setModal({ type: "transfer", lot, department })}>Transfer to {next} <ArrowRight size={15} /></button></div></article>; })}{!records.length && <Empty title={`No ${department.toLowerCase()} lots`} detail="Incoming lots will appear here automatically after the previous department transfers them." />}</div>
+  </div>;
+}
+
+function WarehousePage({ state, setModal }: PageProps) {
+  const total = state.warehouse.reduce((sum, item) => sum + number(item.available_qty), 0); const reserved = state.warehouse.reduce((sum, item) => sum + number(item.reserved_qty), 0); const dispatched = state.warehouse.reduce((sum, item) => sum + number(item.dispatched_qty), 0); const balance = state.warehouse.reduce((sum, item) => sum + number(item.balance_qty), 0);
+  return <div className="page-stack"><SectionHead eyebrow="FINISHED GOODS" title="Warehouse" detail="Live stock received only from Packing and available for controlled customer dispatch." action={<button className="button secondary" onClick={() => exportRows(state.warehouse, "MS-Boutique-Warehouse-Stock")}><Download size={16} /> Export Stock</button>} />
+    <section className="warehouse-strip"><article><WarehouseIcon /><span>Available stock<b>{fmt(total)} PCS</b></span></article><article><Boxes /><span>Reserved stock<b>{fmt(reserved)} PCS</b></span></article><article><Truck /><span>Dispatched stock<b>{fmt(dispatched)} PCS</b></span></article><article><CheckCircle2 /><span>Live balance<b>{fmt(balance)} PCS</b></span></article></section>
+    <article className="panel table-panel"><div className="panel-head"><div><span className="eyebrow">STOCK REGISTER</span><h3>Finished goods inventory</h3></div><span className="live-indicator"><i /> Live stock</span></div><div className="table-scroll"><table><thead><tr><th>Receipt / Lot</th><th>Design</th><th>Fabrication & Sizes</th><th>Available QTY</th><th>Reserved</th><th>Dispatched</th><th>Balance</th><th>Location</th><th>Status</th><th>Action</th></tr></thead><tbody>{state.warehouse.map((item) => { const lot = state.lots.find((row) => number(row.id) === number(item.lot_id)); const receipt = state.receipts.find((row) => number(row.lot_id) === number(item.lot_id)); return <tr key={String(item.id)}><td><button className="table-primary" onClick={() => lot && setModal({ type: "detail", lot })}>{String(receipt?.receipt_no || "WHR") }<small>{String(item.lot_no)}</small></button></td><td><b>{String(item.design_no)}</b><small className="cell-sub">{String(item.customer)}</small></td><td>{String(item.fabrication)}<small className="cell-sub">{String(item.size_range)}</small></td><td><b>{fmt(item.available_qty)}</b></td><td>{fmt(item.reserved_qty)}</td><td>{fmt(item.dispatched_qty)}</td><td><b className="green-text">{fmt(item.balance_qty)}</b></td><td>{String(receipt?.location || "Finished Goods")}<small className="cell-sub">Rack {String(receipt?.rack_no || "—")}</small></td><td><StatusBadge status={item.status} /></td><td><button className="table-action" disabled={number(item.balance_qty) <= 0} onClick={() => lot && setModal({ type: "dispatch", lot })}>Dispatch <Truck size={14} /></button></td></tr>; })}</tbody></table></div>{!state.warehouse.length && <Empty title="Warehouse is empty" detail="Packed quantities appear here after the Packing Department dispatches them to Warehouse." />}</article>
+  </div>;
+}
+
+function DispatchPage({ state, setModal }: PageProps) {
+  const ready = state.warehouse.filter((item) => number(item.balance_qty) > 0);
+  return <div className="page-stack"><SectionHead eyebrow="FINAL MILE" title="Customer Dispatch" detail="Dispatch finished goods from Warehouse with invoice, transporter and delivery tracking." action={<button className="button primary" disabled={!ready.length} onClick={() => { const lot = state.lots.find((row) => number(row.id) === number(ready[0]?.lot_id)); if (lot) setModal({ type: "dispatch", lot }); }}><Send size={16} /> New Dispatch</button>} />
+    <section className="dispatch-callout"><div><Truck size={25} /><span><b>{ready.length} order{ready.length === 1 ? "" : "s"} ready for dispatch</b><small>{fmt(ready.reduce((sum, item) => sum + number(item.balance_qty), 0))} PCS available in finished-goods stock.</small></span></div><div className="ready-chips">{ready.map((item) => <button key={String(item.id)} onClick={() => { const lot = state.lots.find((row) => number(row.id) === number(item.lot_id)); if (lot) setModal({ type: "dispatch", lot }); }}>{String(item.design_no)} · {fmt(item.balance_qty)} PCS <ArrowRight size={14} /></button>)}</div></section>
+    <article className="panel table-panel"><div className="panel-head"><div><span className="eyebrow">DISPATCH REGISTER</span><h3>Customer shipments</h3></div><div className="action-group"><button className="button secondary small" onClick={() => exportRows(state.dispatches, "MS-Boutique-Dispatch-Report")}><Download size={15} /> Excel</button><button className="button secondary small" onClick={() => window.print()}><Printer size={15} /> Print</button></div></div><div className="table-scroll"><table><thead><tr><th>Dispatch No.</th><th>Lot / Design</th><th>Customer</th><th>Dispatch QTY</th><th>Invoice / Challan</th><th>Transport</th><th>Dispatch Date</th><th>Status</th><th>Delivery</th></tr></thead><tbody>{state.dispatches.map((item) => <tr key={String(item.id)}><td><b>{String(item.dispatch_no)}</b><small className="cell-sub">{String(item.tracking_no || "No tracking")}</small></td><td>{String(item.lot_no)}<small className="cell-sub">{String(item.design_no)}</small></td><td>{String(item.customer)}<small className="cell-sub">{String(item.destination)}</small></td><td><b>{fmt(item.dispatch_qty)}</b> PCS</td><td>{String(item.invoice_no)}<small className="cell-sub">{String(item.challan_no)}</small></td><td>{String(item.transporter || "—")}<small className="cell-sub">{String(item.vehicle_no || "—")}</small></td><td>{formatDate(item.dispatch_date)}</td><td><StatusBadge status={item.dispatch_status} /></td><td><StatusBadge status={item.delivery_status} /></td></tr>)}</tbody></table></div>{!state.dispatches.length && <Empty title="No customer dispatches yet" detail="Choose an available warehouse lot to create the first dispatch." />}</article>
+  </div>;
+}
+
+function ReportsPage({ state }: PageProps) {
+  const reports = ["Issue Lot Report", "Embroidery Report", "Cutting Report", "Stitching Report", "Finishing Report", "Packing Report", "Warehouse Stock Report", "Customer Dispatch Report", "Lot Progress Report", "Design-wise Production Report", "Department-wise Production Report", "Pending Lot Report", "Delayed Lot Report", "Daily Production Report", "Monthly Production Report"];
+  const [selected, setSelected] = useState("Lot Progress Report");
+  const reportRows = selected.includes("Warehouse") ? state.warehouse : selected.includes("Dispatch") ? state.dispatches : selected.includes("Audit") ? state.audits : state.lots;
+  return <div className="page-stack"><SectionHead eyebrow="ANALYTICS & EXPORTS" title="Reports" detail="Filter factory performance and export management-ready reports." />
+    <section className="report-layout"><aside className="report-menu">{reports.map((item) => <button key={item} className={selected === item ? "active" : ""} onClick={() => setSelected(item)}><FileBarChart size={16} />{item}<ChevronRight size={15} /></button>)}</aside><article className="panel report-builder"><div className="report-title"><span className="report-icon"><FileBarChart /></span><div><h3>{selected}</h3><p>{reportRows.length} records available · Generated from live factory data</p></div></div><div className="report-filters"><Field label="Date Range"><select><option>01 Aug 2026 — 09 Aug 2026</option><option>This month</option><option>Last month</option></select></Field><Field label="Department"><select><option>All Departments</option>{workflow.map((item) => <option key={item}>{item}</option>)}</select></Field><Field label="Status"><select><option>All Statuses</option><option>In Progress</option><option>Completed</option><option>Hold</option></select></Field><Field label="Customer"><select><option>All Customers</option>{state.customers.map((item) => <option key={String(item.id)}>{String(item.name)}</option>)}</select></Field></div><div className="report-preview"><div className="report-stat"><span>Total records</span><b>{reportRows.length}</b></div><div className="report-stat"><span>Total quantity</span><b>{fmt(reportRows.reduce((sum, item) => sum + number(item.quantity || item.dispatch_qty || item.available_qty), 0))}</b></div><div className="report-stat"><span>Generated on</span><b>09 Aug 2026</b></div></div><div className="report-actions"><button className="button primary" onClick={() => exportRows(reportRows, selected.replaceAll(" ", "-"))}><Download size={16} /> Export Excel</button><button className="button secondary" onClick={() => window.print()}><FileText size={16} /> Export PDF</button><button className="button secondary" onClick={() => window.print()}><Printer size={16} /> Print Report</button></div></article></section>
+  </div>;
+}
+
+function MasterDataPage({ state, page, setModal }: PageProps & { page: string }) {
+  const rows = page === "Designs" ? state.designs : page === "Customers" ? state.customers : state.warehouse;
+  return <div className="page-stack"><SectionHead eyebrow="MASTER DATA" title={page} detail={page === "Designs" ? "Design master with fabrication, sizes and production lots." : page === "Customers" ? "Customer accounts connected to active and completed orders." : "Finished-goods inventory synchronized with Warehouse."} action={<button className="button secondary" onClick={() => exportRows(rows, `MS-Boutique-${page}`)}><Download size={16} /> Export</button>} />
+    <section className="master-grid">{page === "Designs" && rows.map((item) => { const lots = state.lots.filter((lot) => number(lot.design_id) === number(item.id)); return <article className="master-card" key={String(item.id)}><div className="design-swatch"><Palette /></div><div><span>DESIGN</span><h3>{String(item.design_no)}</h3><p>{String(item.fabrication)} · {String(item.size_range)}</p></div><dl><div><dt>Production lots</dt><dd>{lots.length}</dd></div><div><dt>Total quantity</dt><dd>{fmt(lots.reduce((sum, lot) => sum + number(lot.quantity), 0))} PCS</dd></div></dl>{lots[0] && <button className="link-button" onClick={() => setModal({ type: "detail", lot: lots[0] })}>View production <ArrowRight size={14} /></button>}</article>; })}
+      {page === "Customers" && rows.map((item) => { const lots = state.lots.filter((lot) => number(lot.customer_id) === number(item.id)); return <article className="master-card customer-card" key={String(item.id)}><div className="avatar large">{String(item.name).split(" ").map((word) => word[0]).slice(0,2).join("")}</div><div><span>CUSTOMER</span><h3>{String(item.name)}</h3><p>{String(item.contact || "No contact")} · {String(item.destination || "Pakistan")}</p></div><dl><div><dt>Orders</dt><dd>{lots.length}</dd></div><div><dt>Total ordered</dt><dd>{fmt(lots.reduce((sum, lot) => sum + number(lot.quantity), 0))} PCS</dd></div></dl></article>; })}
+      {page === "Inventory" && <article className="panel table-panel field-span"><div className="table-scroll"><table><thead><tr><th>Design</th><th>Lot No.</th><th>Customer</th><th>Available</th><th>Reserved</th><th>Dispatched</th><th>Balance</th><th>Status</th></tr></thead><tbody>{rows.map((item) => <tr key={String(item.id)}><td><b>{String(item.design_no)}</b></td><td>{String(item.lot_no)}</td><td>{String(item.customer)}</td><td>{fmt(item.available_qty)}</td><td>{fmt(item.reserved_qty)}</td><td>{fmt(item.dispatched_qty)}</td><td><b>{fmt(item.balance_qty)}</b></td><td><StatusBadge status={item.status} /></td></tr>)}</tbody></table></div></article>}
+    </section>
+  </div>;
+}
+
+function AdminPage({ state, page }: PageProps & { page: string }) {
+  if (page === "Audit Logs") return <div className="page-stack"><SectionHead eyebrow="IMMUTABLE RECORD" title="Audit Logs" detail="Every quantity, transfer and record change is preserved and cannot be deleted." action={<button className="button secondary" onClick={() => exportRows(state.audits, "MS-Boutique-Audit-Logs")}><Download size={16} /> Export Logs</button>} /><article className="panel table-panel"><div className="table-scroll"><table><thead><tr><th>Date & Time</th><th>User</th><th>Department</th><th>Lot / Design</th><th>Action</th><th>Previous</th><th>New</th><th>Quantity</th><th>Remarks</th></tr></thead><tbody>{state.audits.map((item) => <tr key={String(item.id)}><td>{formatDate(item.created_at, true)}</td><td><b>{String(item.user_name || "Ayesha Khan")}</b></td><td>{String(item.department || "System")}</td><td>{String(item.lot_no || "—")}<small className="cell-sub">{String(item.design_no || "—")}</small></td><td><StatusBadge status={item.action} /></td><td><span className="audit-value">{String(item.previous_value || "—").slice(0, 38)}</span></td><td><span className="audit-value new">{String(item.new_value || "—").slice(0, 38)}</span></td><td>{fmt(item.quantity)}</td><td>{String(item.remarks || "—")}</td></tr>)}</tbody></table></div></article></div>;
+  if (page === "Notifications") return <div className="page-stack"><SectionHead eyebrow="FACTORY ALERTS" title="Notifications" detail="Incoming lots, delivery risks and warehouse readiness alerts." /><div className="notification-list">{state.notifications.map((item, index) => <article key={String(item.id)} className={!index ? "unread" : ""}><div className="notification-icon">{index ? <CalendarDays /> : <Bell />}</div><div><h3>{String(item.title)}</h3><p>{String(item.message)}</p><small>{formatDate(item.created_at, true)}</small></div><span>{index ? "Due date" : "Stock alert"}</span></article>)}</div></div>;
+  if (page === "Users & Permissions") { const roles = ["Super Admin","Factory Manager","Issue Lot User","Embroidery Manager","Cutting Manager","Stitching Manager","Finishing Manager","Packing Manager","Warehouse Manager","Dispatch Manager","Viewer"]; return <div className="page-stack"><SectionHead eyebrow="ACCESS CONTROL" title="Users & Permissions" detail="Department-scoped permissions protect production records and transfers." action={<button className="button primary"><Plus size={16} /> Add User</button>} /><article className="panel permission-panel"><div className="admin-user"><div className="avatar large">AK</div><div><h3>Ayesha Khan</h3><p>admin@msboutique.com</p></div><StatusBadge status="Super Admin" /></div><div className="role-grid">{roles.map((role, index) => <div key={role}><span className={`role-icon tone-${index % 5}`}><ShieldCheck /></span><b>{role}</b><small>{index === 0 ? "Full system access" : index === 1 ? "All production departments" : role === "Viewer" ? "Read-only access" : `${role.replace(" Manager", "")} records only`}</small><button aria-label={`Configure ${role}`} title={`Configure ${role}`}><MoreHorizontal size={17} /></button></div>)}</div></article></div>; }
+  if (page === "Employees") return <div className="page-stack"><SectionHead eyebrow="TEAM DIRECTORY" title="Employees" detail="Production managers, supervisors and operators by department." action={<button className="button primary"><Plus size={16} /> Add Employee</button>} /><section className="employee-grid">{[["Ali Raza","Embroidery","Manager"],["Kashif Iqbal","Cutting","Supervisor"],["Sana Noor","Stitching","Line Manager"],["Mehwish Ali","Finishing","Supervisor"],["Faiza Khan","Packing","Manager"],["Usman Shah","Warehouse","Manager"]].map((person) => <article key={person[0]}><div className="avatar large">{person[0].split(" ").map((w) => w[0]).join("")}</div><h3>{person[0]}</h3><p>{person[2]}</p><span>{departmentIcon(person[1])}{person[1]}</span></article>)}</section></div>;
+  return <div className="page-stack"><SectionHead eyebrow="SYSTEM PREFERENCES" title="Settings" detail="Factory identity, production rules and notification defaults." /><article className="panel settings-panel"><div className="settings-section"><div><h3>Factory profile</h3><p>Used across reports and customer documents.</p></div><div className="form-grid"><Field label="Application Name"><input defaultValue="MS Boutique Factory Management System" /></Field><Field label="Dashboard Subtitle"><input defaultValue="Lot & Production Tracking System" /></Field><Field label="Factory Timezone"><select defaultValue="Asia/Karachi"><option>Asia/Karachi</option></select></Field><Field label="Quantity Unit"><select defaultValue="PCS"><option>PCS</option></select></Field></div></div><div className="settings-section"><div><h3>Workflow control</h3><p>The official eight-step production sequence.</p></div><div className="settings-flow">{workflow.map((item, index) => <span key={item}><b>{index + 1}</b>{item}{index < 7 && <ArrowRight size={15} />}</span>)}</div></div><div className="settings-save"><button className="button primary">Save Settings</button></div></article></div>;
+}
+
+function NewLotModal({ onClose, onSave, saving, state }: { onClose: () => void; onSave: PageProps["post"]; saving: boolean; state: FactoryState }) {
+  const today = "2026-08-09"; const [form, setForm] = useState({ designNo: "", fabrication: "", quantity: "", sizeRange: "S-XL", customer: "Noor Fashion House", orderDate: today, deliveryDate: "2026-08-25", priority: "Normal", remarks: "Production approved." });
+  const [sizes, setSizes] = useState([{ size: "S", quantity: "" },{ size: "M", quantity: "" },{ size: "L", quantity: "" },{ size: "XL", quantity: "" }]); const [errors, setErrors] = useState<Record<string,string>>({});
+  const set = (key: string, value: string) => { setForm((current) => ({ ...current, [key]: value })); setErrors((current) => ({ ...current, [key]: "" })); };
+  const submit = async (event: FormEvent) => { event.preventDefault(); const next: Record<string,string> = {}; if (!form.designNo.trim()) next.designNo = "Design No. is required."; if (!form.fabrication.trim()) next.fabrication = "Fabrication is required."; if (number(form.quantity) <= 0) next.quantity = "QTY must be greater than zero."; if (!form.sizeRange.trim()) next.sizeRange = "Size Range is required."; if (form.deliveryDate < form.orderDate) next.deliveryDate = "Delivery Date cannot be before Order Date."; const sizeTotal = sizes.reduce((sum, item) => sum + number(item.quantity), 0); if (sizeTotal && sizeTotal !== number(form.quantity)) next.sizes = "Total size quantity must equal lot quantity."; setErrors(next); if (Object.keys(next).length) return; await onSave({ action: "create-lot", ...form, quantity: number(form.quantity), sizes: sizes.filter((item) => item.quantity).map((item) => ({ size: item.size, quantity: number(item.quantity) })) }); };
+  return <Modal title="Issue New Production Lot" subtitle="Lot No. will be generated automatically after validation." onClose={onClose} wide><form onSubmit={submit}><div className="form-grid three"><Field label="Lot No."><input value="Auto-generated" disabled /></Field><Field label="Design No. *" error={errors.designNo}><input placeholder="e.g. MS-1006" value={form.designNo} onChange={(e) => set("designNo", e.target.value.toUpperCase())} /></Field><Field label="Fabrication *" error={errors.fabrication}><input list="fabrications" placeholder="e.g. Cotton Lawn" value={form.fabrication} onChange={(e) => set("fabrication", e.target.value)} /><datalist id="fabrications">{state.designs.map((item) => <option key={String(item.id)} value={String(item.fabrication)} />)}</datalist></Field><Field label="Total QTY *" error={errors.quantity}><input type="number" min="1" placeholder="5,000" value={form.quantity} onChange={(e) => set("quantity", e.target.value)} /></Field><Field label="Size Range *" error={errors.sizeRange}><input placeholder="S-XL" value={form.sizeRange} onChange={(e) => set("sizeRange", e.target.value)} /></Field><Field label="Customer *"><input list="customers" value={form.customer} onChange={(e) => set("customer", e.target.value)} /><datalist id="customers">{state.customers.map((item) => <option key={String(item.id)} value={String(item.name)} />)}</datalist></Field><Field label="Order Date"><input type="date" value={form.orderDate} onChange={(e) => set("orderDate", e.target.value)} /></Field><Field label="Required Delivery Date" error={errors.deliveryDate}><input type="date" value={form.deliveryDate} onChange={(e) => set("deliveryDate", e.target.value)} /></Field><Field label="Priority"><select value={form.priority} onChange={(e) => set("priority", e.target.value)}><option>Normal</option><option>High</option><option>Urgent</option></select></Field></div><div className="size-breakdown"><div><span className="eyebrow">OPTIONAL SIZE-WISE QUANTITY</span><p>Enter sizes to validate them against the total lot quantity.</p></div><div className="size-inputs">{sizes.map((item, index) => <div key={index}><input aria-label={`Size ${index + 1}`} value={item.size} onChange={(e) => setSizes((current) => current.map((row, i) => i === index ? { ...row, size: e.target.value.toUpperCase() } : row))} /><input aria-label={`Quantity for ${item.size}`} type="number" min="0" placeholder="QTY" value={item.quantity} onChange={(e) => setSizes((current) => current.map((row, i) => i === index ? { ...row, quantity: e.target.value } : row))} /></div>)}<div className="size-total"><span>Total</span><b>{fmt(sizes.reduce((sum, item) => sum + number(item.quantity), 0))}</b></div></div>{errors.sizes && <small className="field-error"><AlertTriangle size={13} />{errors.sizes}</small>}</div><Field label="Initial Remarks" span><textarea rows={3} value={form.remarks} onChange={(e) => set("remarks", e.target.value)} /></Field><div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>{saving && <LoaderCircle className="spin" size={16} />} Issue Lot <ArrowRight size={16} /></button></div></form></Modal>;
+}
+
+function EditLotModal({ lot, onClose, onSave, saving }: { lot: Row; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) {
+  const [form, setForm] = useState({ fabrication: String(lot.fabrication), quantity: String(lot.quantity), sizeRange: String(lot.size_range), orderDate: String(lot.order_date), deliveryDate: String(lot.required_delivery_date), priority: String(lot.priority), remarks: String(lot.remarks) }); const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!form.fabrication || !form.sizeRange || number(form.quantity) <= 0) return setError("Complete all required fields with a valid quantity."); if (form.deliveryDate < form.orderDate) return setError("Required Delivery Date cannot be before Order Date."); await onSave({ action: "update-lot", lotId: lot.id, ...form, quantity: number(form.quantity) }); };
+  return <Modal title={`Edit ${String(lot.lot_no)}`} subtitle={`${String(lot.design_no)} · Changes are recorded in Audit Logs.`} onClose={onClose}><form onSubmit={submit}><div className="form-grid"><Field label="Fabrication"><input value={form.fabrication} onChange={(e) => setForm({ ...form, fabrication: e.target.value })} /></Field><Field label="Total QTY"><input type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} /></Field><Field label="Size Range"><input value={form.sizeRange} onChange={(e) => setForm({ ...form, sizeRange: e.target.value })} /></Field><Field label="Priority"><select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}><option>Normal</option><option>High</option><option>Urgent</option></select></Field><Field label="Order Date"><input type="date" value={form.orderDate} onChange={(e) => setForm({ ...form, orderDate: e.target.value })} /></Field><Field label="Delivery Date"><input type="date" value={form.deliveryDate} onChange={(e) => setForm({ ...form, deliveryDate: e.target.value })} /></Field><Field label="Remarks" span><textarea rows={3} value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} /></Field></div>{error && <div className="form-alert"><AlertTriangle size={16} />{error}</div>}<div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>Save Changes</button></div></form></Modal>;
+}
+
+function ProductionModal({ lot, department, state, onClose, onSave, saving }: { lot: Row; department: string; state: FactoryState; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) {
+  const record = state.records[department]?.find((item) => number(item.lot_id) === number(lot.id)); const received = number(record?.received_qty); const [form, setForm] = useState({ completedQty: String(record?.completed_qty ?? 0), rejectedQty: String(record?.rejected_qty ?? 0), reworkQty: String(record?.rework_qty ?? 0), status: String(record?.status === "Waiting" ? "Received" : record?.status || "Received"), remarks: String(record?.remarks || ""), targetQty: String(record?.target_qty || received), todayProduction: String(record?.today_production || 0), productionLine: String(record?.production_line || "Line 01"), supervisor: String(record?.supervisor || ""), process: String(record?.process || "General Quality Check"), piecesPerCarton: String(record?.pieces_per_carton || 20) }); const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => { event.preventDefault(); const completed = number(form.completedQty), rejected = number(form.rejectedQty); if ([completed,rejected,number(form.reworkQty)].some((value) => value < 0)) return setError("Incorrect Quantity — quantities cannot be negative."); if (completed > received) return setError("Completed QTY cannot exceed Received QTY."); if (completed + rejected > received) return setError("Completed plus Rejected QTY cannot exceed Received QTY."); await onSave({ action: "update-production", lotId: lot.id, department, ...form, completedQty: completed, rejectedQty: rejected, reworkQty: number(form.reworkQty), targetQty: number(form.targetQty), todayProduction: number(form.todayProduction), piecesPerCarton: number(form.piecesPerCarton) }); };
+  const label = department === "Cutting" || department === "Finishing" ? "Passed QTY" : department === "Packing" ? "Packing QTY" : "Completed QTY";
+  return <Modal title={`Update ${department} Production`} subtitle={`${String(lot.design_no)} / ${String(lot.lot_no)} · ${fmt(received)} PCS received`} onClose={onClose} wide><form onSubmit={submit}><div className="production-summary"><span><small>Received QTY</small><b>{fmt(received)}</b></span><span><small>Already transferred</small><b>{fmt(record?.transferred_qty)}</b></span><span><small>Calculated pending</small><b>{fmt(Math.max(0, received - number(form.completedQty)))}</b></span>{department === "Packing" && <span><small>Calculated cartons</small><b>{Math.ceil(number(form.completedQty) / Math.max(1, number(form.piecesPerCarton)))}</b></span>}</div><div className="form-grid three"><Field label={label}><input type="number" min="0" max={received} value={form.completedQty} onChange={(e) => { setForm({ ...form, completedQty: e.target.value }); setError(""); }} /></Field><Field label="Rejected QTY"><input type="number" min="0" value={form.rejectedQty} onChange={(e) => setForm({ ...form, rejectedQty: e.target.value })} /></Field><Field label="Rework QTY"><input type="number" min="0" value={form.reworkQty} onChange={(e) => setForm({ ...form, reworkQty: e.target.value })} /></Field>{department === "Stitching" && <><Field label="Target QTY"><input type="number" value={form.targetQty} onChange={(e) => setForm({ ...form, targetQty: e.target.value })} /></Field><Field label="Today's Production"><input type="number" value={form.todayProduction} onChange={(e) => setForm({ ...form, todayProduction: e.target.value })} /></Field><Field label="Production Line"><input value={form.productionLine} onChange={(e) => setForm({ ...form, productionLine: e.target.value })} /></Field></>}{department === "Finishing" && <Field label="Finishing Process"><select value={form.process} onChange={(e) => setForm({ ...form, process: e.target.value })}>{["Thread Cutting","Ironing","Measurement Check","Cleaning","Final Inspection","Button / Accessory Check","Label Check","General Quality Check"].map((item) => <option key={item}>{item}</option>)}</select></Field>}{department === "Packing" && <Field label="Pieces Per Carton"><input type="number" min="1" value={form.piecesPerCarton} onChange={(e) => setForm({ ...form, piecesPerCarton: e.target.value })} /></Field>}<Field label="Status"><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{["Received","In Progress","Running","Partially Completed","Completed","Hold","Rework"].map((item) => <option key={item}>{item}</option>)}</select></Field><Field label="Supervisor"><input value={form.supervisor} onChange={(e) => setForm({ ...form, supervisor: e.target.value })} /></Field><Field label="Timestamped Remarks" span><textarea rows={3} value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder={`Add a ${department.toLowerCase()} production note…`} /></Field></div>{error && <div className="form-alert"><AlertTriangle size={16} />{error}</div>}<div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>{saving && <LoaderCircle className="spin" size={16} />} Save Production Update</button></div></form></Modal>;
+}
+
+function TransferModal({ lot, department, state, onClose, onSave, saving }: { lot: Row; department: string; state: FactoryState; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) {
+  const record = department === "Issue Lot" ? null : state.records[department]?.find((item) => number(item.lot_id) === number(lot.id)); const issueTransferred = department === "Issue Lot" ? state.transfers.filter((item) => number(item.lot_id) === number(lot.id) && number(item.from_department_id) === 1).reduce((sum, item) => sum + number(item.quantity), 0) : 0; const completed = department === "Issue Lot" ? number(lot.quantity) : number(record?.completed_qty); const transferred = department === "Issue Lot" ? issueTransferred : number(record?.transferred_qty); const available = Math.max(0, completed - transferred); const next = workflow[workflow.indexOf(department) + 1]; const [quantity, setQuantity] = useState(String(available)); const [remarks, setRemarks] = useState(`${available.toLocaleString()} PCS verified and ready for ${next}.`); const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (number(quantity) <= 0) return setError("Transfer QTY must be greater than zero."); if (number(quantity) > available) return setError("Transfer quantity cannot exceed available completed quantity."); await onSave({ action: "transfer", lotId: lot.id, department, quantity: number(quantity), remarks }); };
+  return <Modal title={`Transfer to ${next}`} subtitle="Quantity-controlled department handoff" onClose={onClose}><form onSubmit={submit}><div className="transfer-route"><span>{departmentIcon(department)}<b>{department}</b></span><ArrowRight /><span>{departmentIcon(next)}<b>{next}</b></span></div><div className="transfer-lot"><span><small>DESIGN / LOT</small><b>{String(lot.design_no)} / {String(lot.lot_no)}</b></span><span><small>COMPLETED</small><b>{fmt(completed)} PCS</b></span><span><small>ALREADY TRANSFERRED</small><b>{fmt(transferred)} PCS</b></span><span><small>AVAILABLE NOW</small><b className="green-text">{fmt(available)} PCS</b></span></div><Field label="Transfer QTY"><input type="number" min="1" max={available} value={quantity} onChange={(e) => { setQuantity(e.target.value); setError(""); }} /></Field><Field label="Transfer Remarks"><textarea rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>{error && <div className="form-alert"><AlertTriangle size={16} />{error}</div>}<div className="confirm-copy"><CheckCircle2 size={18} /><span>Transfer <b>{fmt(quantity)} PCS</b> of Design <b>{String(lot.design_no)} / {String(lot.lot_no)}</b> from {department} to {next}?</span></div><div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving || available <= 0}>{saving && <LoaderCircle className="spin" size={16} />} Confirm Transfer</button></div></form></Modal>;
+}
+
+function RemarkModal({ lot, department, onClose, onSave, saving }: { lot: Row; department: string; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) { const [remark, setRemark] = useState(""); const [error, setError] = useState(""); return <Modal title="Add Timestamped Remark" subtitle={`${String(lot.design_no)} / ${String(lot.lot_no)} · ${department}`} onClose={onClose}><form onSubmit={async (event) => { event.preventDefault(); if (!remark.trim()) return setError("Remarks cannot be blank."); await onSave({ action: "add-remark", lotId: lot.id, department, remark }); }}><Field label="Remark" error={error}><textarea rows={5} autoFocus value={remark} onChange={(e) => { setRemark(e.target.value); setError(""); }} placeholder="Describe production progress, quality observations or transfer notes…" /></Field><div className="history-note"><FileText size={17} />This entry will be timestamped and added to the permanent remarks and audit history.</div><div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>Add Remark</button></div></form></Modal>; }
+
+function DispatchModal({ lot, state, onClose, onSave, saving }: { lot: Row; state: FactoryState; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) {
+  const inventory = state.warehouse.find((item) => number(item.lot_id) === number(lot.id)); const available = number(inventory?.balance_qty); const [form, setForm] = useState({ quantity: String(available), cartonQty: String(Math.ceil(available / 20)), invoiceNo: `INV-2026-${String(state.dispatches.length + 1).padStart(3,"0")}`, challanNo: `DC-2026-${String(state.dispatches.length + 1).padStart(3,"0")}`, transporter: "MS Logistics", vehicleNo: "LEA-2026", driverName: "Imran Ali", driverContact: "+92 300 000 0000", dispatchDate: "2026-08-09", destination: String(lot.destination || "Lahore"), trackingNo: `TRK-${Date.now().toString().slice(-6)}`, remarks: "Finished goods counted and sealed." }); const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (number(form.quantity) <= 0) return setError("Dispatch QTY must be greater than zero."); if (number(form.quantity) > available) return setError("Dispatch QTY cannot be greater than Warehouse Available QTY."); if (!form.invoiceNo || !form.challanNo) return setError("Invoice No. and Delivery Challan No. are required."); await onSave({ action: "dispatch", lotId: lot.id, ...form, quantity: number(form.quantity), cartonQty: number(form.cartonQty) }); };
+  return <Modal title="Create Customer Dispatch" subtitle={`${String(lot.design_no)} / ${String(lot.lot_no)} · ${String(lot.customer)}`} onClose={onClose} wide><form onSubmit={submit}><div className="warehouse-available"><WarehouseIcon /><span><small>WAREHOUSE AVAILABLE QTY</small><b>{fmt(available)} PCS</b></span><span><small>AFTER THIS DISPATCH</small><b>{fmt(Math.max(0, available - number(form.quantity)))} PCS</b></span></div><div className="form-grid three"><Field label="Dispatch QTY *"><input type="number" min="1" max={available} value={form.quantity} onChange={(e) => { setForm({ ...form, quantity: e.target.value }); setError(""); }} /></Field><Field label="Carton QTY"><input type="number" min="0" value={form.cartonQty} onChange={(e) => setForm({ ...form, cartonQty: e.target.value })} /></Field><Field label="Dispatch Date"><input type="date" value={form.dispatchDate} onChange={(e) => setForm({ ...form, dispatchDate: e.target.value })} /></Field><Field label="Invoice No. *"><input value={form.invoiceNo} onChange={(e) => setForm({ ...form, invoiceNo: e.target.value })} /></Field><Field label="Delivery Challan No. *"><input value={form.challanNo} onChange={(e) => setForm({ ...form, challanNo: e.target.value })} /></Field><Field label="Tracking / Reference No."><input value={form.trackingNo} onChange={(e) => setForm({ ...form, trackingNo: e.target.value })} /></Field><Field label="Transporter"><input value={form.transporter} onChange={(e) => setForm({ ...form, transporter: e.target.value })} /></Field><Field label="Vehicle No."><input value={form.vehicleNo} onChange={(e) => setForm({ ...form, vehicleNo: e.target.value })} /></Field><Field label="Destination"><input value={form.destination} onChange={(e) => setForm({ ...form, destination: e.target.value })} /></Field><Field label="Driver Name"><input value={form.driverName} onChange={(e) => setForm({ ...form, driverName: e.target.value })} /></Field><Field label="Driver Contact"><input value={form.driverContact} onChange={(e) => setForm({ ...form, driverContact: e.target.value })} /></Field><Field label="Remarks"><input value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} /></Field></div>{error && <div className="form-alert"><AlertTriangle size={16} />{error}</div>}<div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>{saving && <LoaderCircle className="spin" size={16} />} Confirm Customer Dispatch <Truck size={16} /></button></div></form></Modal>;
+}
+
+function LotDetail({ lot, state, onClose, setModal }: { lot: Row; state: FactoryState; onClose: () => void; setModal: PageProps["setModal"] }) {
+  const current = workflow.indexOf(String(lot.current_department)); const lotHistory = state.history.filter((item) => number(item.lot_id) === number(lot.id)); const remarks = state.remarks.filter((item) => number(item.lot_id) === number(lot.id)); const sizes = state.sizes.filter((item) => number(item.lot_id) === number(lot.id));
+  return <Modal title={`${String(lot.design_no)} / ${String(lot.lot_no)}`} subtitle={`${String(lot.fabrication)} · ${fmt(lot.quantity)} PCS · ${String(lot.customer)}`} onClose={onClose} wide><div className="detail-top"><div><span className="eyebrow">OVERALL LOT PROGRESS</span><b>{Math.round(lotProgress(lot))}%</b></div><Progress value={lotProgress(lot)} /><StatusBadge status={lot.status} /></div><div className="workflow-track">{workflow.map((item, index) => { const held = index === current && /Hold|Rework/i.test(String(lot.status)); const cls = held ? "error" : index < current ? "done" : index === current ? /Partial/i.test(String(lot.status)) ? "partial" : "current" : "pending"; return <div className={cls} key={item}><span>{index < current ? <Check size={17} /> : index === current ? departmentIcon(item) : <Circle size={13} />}</span><b>{item === "Customer Dispatch" ? "Customer" : item}</b><small>{index < current ? "Completed" : index === current ? String(lot.status) : "Pending"}</small>{index < workflow.length - 1 && <i />}</div>; })}</div><div className="detail-grid"><section><h3>Lot information</h3><dl className="detail-list"><div><dt>Design No.</dt><dd>{String(lot.design_no)}</dd></div><div><dt>Lot No.</dt><dd>{String(lot.lot_no)}</dd></div><div><dt>Fabrication</dt><dd>{String(lot.fabrication)}</dd></div><div><dt>Total QTY</dt><dd>{fmt(lot.quantity)} PCS</dd></div><div><dt>Size Range</dt><dd>{String(lot.size_range)}</dd></div><div><dt>Required Date</dt><dd>{formatDate(lot.required_delivery_date)}</dd></div><div><dt>Current Department</dt><dd>{String(lot.current_department)}</dd></div><div><dt>Customer</dt><dd>{String(lot.customer)}</dd></div></dl>{sizes.length > 0 && <div className="size-view"><span>SIZE BREAKDOWN</span>{sizes.map((item) => <b key={String(item.id)}>{String(item.size)} <em>{fmt(item.quantity)}</em></b>)}</div>}<div className="detail-buttons"><button className="button secondary" onClick={() => setModal({ type: "edit-lot", lot })}><Pencil size={15} /> Edit Lot</button><button className="button secondary" onClick={() => setModal({ type: "remark", lot })}><FileText size={15} /> Add Remark</button></div></section><section><h3>Activity history</h3>{lotHistory.length ? <ActivityList rows={lotHistory} /> : <Empty title="No history yet" detail="Activity appears as the lot moves through production." />}</section></div>{remarks.length > 0 && <section className="remarks-history"><h3>Remarks history</h3>{remarks.map((item) => <article key={String(item.id)}><div className="avatar small">{String(item.user_name || "AK").split(" ").map((word) => word[0]).slice(0,2).join("")}</div><div><p>{String(item.remark)}</p><small>{formatDate(item.created_at, true)} · {String(item.user_name || "Ayesha Khan")} · {String(item.department)}</small></div></article>)}</section>}</Modal>;
+}
+
+function exportRows(rows: Row[], filename: string) { if (!rows.length) return; const columns = Object.keys(rows[0]).filter((column) => !["password_hash"].includes(column)); const csv = [columns.join(","), ...rows.map((row) => columns.map((column) => `"${String(row[column] ?? "").replaceAll('"','""')}"`).join(","))].join("\n"); const blob = new Blob([csv], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${filename}.csv`; anchor.click(); URL.revokeObjectURL(url); }

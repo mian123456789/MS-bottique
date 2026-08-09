@@ -11,8 +11,8 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["@cloudflare/workers-types"],
     "jsx": "react-jsx",
+    "types": ["@cloudflare/workers-types"],
     "incremental": true,
     "paths": {
       "@/*": ["./*"]
