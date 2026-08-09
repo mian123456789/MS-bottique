@@ -26,6 +26,7 @@ const createStatements = [
   `CREATE TABLE IF NOT EXISTS departments (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, sequence INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, role_id INTEGER REFERENCES roles(id), department_id INTEGER REFERENCES departments(id), active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT NOT NULL DEFAULT '', destination TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS system_settings (id INTEGER PRIMARY KEY, company_name TEXT NOT NULL DEFAULT 'MS Boutique', address TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', website TEXT NOT NULL DEFAULT '', logo_url TEXT NOT NULL DEFAULT '', invoice_prefix TEXT NOT NULL DEFAULT 'INV', challan_prefix TEXT NOT NULL DEFAULT 'DC', footer_note TEXT NOT NULL DEFAULT 'Thank you for choosing MS Boutique.', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS designs (id INTEGER PRIMARY KEY AUTOINCREMENT, design_no TEXT NOT NULL UNIQUE, fabrication TEXT NOT NULL, size_range TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS lots (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_no TEXT NOT NULL UNIQUE, design_id INTEGER NOT NULL REFERENCES designs(id), customer_id INTEGER NOT NULL REFERENCES customers(id), fabrication TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity > 0), size_range TEXT NOT NULL, order_date TEXT NOT NULL, required_delivery_date TEXT NOT NULL, priority TEXT NOT NULL DEFAULT 'Normal', current_department TEXT NOT NULL DEFAULT 'Issue Lot', status TEXT NOT NULL DEFAULT 'Lot Issued', completed_qty INTEGER NOT NULL DEFAULT 0, remarks TEXT NOT NULL DEFAULT '', issue_date TEXT NOT NULL, user_id INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS lot_size_breakdowns (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id INTEGER NOT NULL REFERENCES lots(id), size TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
@@ -52,6 +53,7 @@ const createStatements = [
 async function ensureDatabase() {
   const db = getD1();
   await db.batch(createStatements.map((statement) => db.prepare(statement)));
+  await db.prepare("INSERT OR IGNORE INTO system_settings (id,company_name,address,phone,website,logo_url,invoice_prefix,challan_prefix,footer_note) VALUES (1,'MS Boutique','Industrial Area, Lahore, Pakistan','+92 300 000 0000','www.msboutique.com','','INV','DC','Computer generated gate pass — no signature required for system approval.')").run();
   const count = await db.prepare("SELECT COUNT(*) AS count FROM lots").first<{ count: number }>();
   if ((count?.count ?? 0) > 0) return;
 
@@ -94,7 +96,7 @@ async function ensureDatabase() {
 
 async function getState() {
   const db = getD1();
-  const [lots, sizes, embroidery, cutting, stitching, finishing, packing, warehouse, receipts, dispatches, transfers, remarks, history, audits, customers, designs, notifications] = await Promise.all([
+  const [lots, sizes, embroidery, cutting, stitching, finishing, packing, warehouse, receipts, dispatches, transfers, remarks, history, audits, customers, designs, notifications, settings] = await Promise.all([
     db.prepare(`SELECT l.*, d.design_no, c.name AS customer, c.destination FROM lots l JOIN designs d ON d.id=l.design_id JOIN customers c ON c.id=l.customer_id ORDER BY l.id DESC`).all(),
     db.prepare("SELECT * FROM lot_size_breakdowns ORDER BY id").all(),
     db.prepare("SELECT * FROM embroidery_records ORDER BY id DESC").all(),
@@ -103,7 +105,7 @@ async function getState() {
     db.prepare("SELECT * FROM finishing_records ORDER BY id DESC").all(),
     db.prepare("SELECT * FROM packing_records ORDER BY id DESC").all(),
     db.prepare(`SELECT wi.*, l.lot_no, l.fabrication, l.size_range, d.design_no, c.name AS customer, (wi.available_qty-wi.dispatched_qty) AS balance_qty FROM warehouse_inventory wi JOIN lots l ON l.id=wi.lot_id JOIN designs d ON d.id=wi.design_id JOIN customers c ON c.id=l.customer_id ORDER BY wi.id DESC`).all(),
-    db.prepare("SELECT * FROM warehouse_receipts ORDER BY id DESC").all(),
+    db.prepare(`SELECT wr.*, l.lot_no, l.fabrication, l.size_range, d.design_no, c.name AS customer FROM warehouse_receipts wr JOIN lots l ON l.id=wr.lot_id JOIN designs d ON d.id=wr.design_id JOIN customers c ON c.id=l.customer_id ORDER BY wr.id DESC`).all(),
     db.prepare(`SELECT cd.*, l.lot_no, l.fabrication, l.size_range, d.design_no, c.name AS customer FROM customer_dispatches cd JOIN lots l ON l.id=cd.lot_id JOIN designs d ON d.id=cd.design_id JOIN customers c ON c.id=cd.customer_id ORDER BY cd.id DESC`).all(),
     db.prepare(`SELECT t.*, fd.name AS from_department, td.name AS to_department, u.name AS user_name FROM department_transfers t JOIN departments fd ON fd.id=t.from_department_id JOIN departments td ON td.id=t.to_department_id LEFT JOIN users u ON u.id=t.user_id ORDER BY t.id DESC`).all(),
     db.prepare(`SELECT r.*, u.name AS user_name, d.name AS department FROM lot_remarks r LEFT JOIN users u ON u.id=r.user_id LEFT JOIN departments d ON d.id=r.department_id ORDER BY r.id DESC`).all(),
@@ -112,6 +114,7 @@ async function getState() {
     db.prepare("SELECT * FROM customers ORDER BY name").all(),
     db.prepare("SELECT * FROM designs ORDER BY design_no").all(),
     db.prepare("SELECT * FROM notifications ORDER BY id DESC").all(),
+    db.prepare("SELECT * FROM system_settings WHERE id=1").all(),
   ]);
   return {
     lots: lots.results, sizes: sizes.results,
@@ -119,6 +122,7 @@ async function getState() {
     warehouse: warehouse.results, receipts: receipts.results, dispatches: dispatches.results,
     transfers: transfers.results, remarks: remarks.results, history: history.results, audits: audits.results,
     customers: customers.results, designs: designs.results, notifications: notifications.results,
+    settings: settings.results[0] ?? {},
   };
 }
 
@@ -141,6 +145,68 @@ export async function POST(request: Request) {
     const db = getD1();
     const body = await request.json() as Record<string, unknown>;
     const action = String(body.action ?? "");
+
+    if (action === "save-settings") {
+      const companyName = String(body.companyName ?? "").trim();
+      const address = String(body.address ?? "").trim();
+      const phone = String(body.phone ?? "").trim();
+      const website = String(body.website ?? "").trim();
+      const logoUrl = String(body.logoUrl ?? "").trim();
+      const invoicePrefix = String(body.invoicePrefix ?? "INV").trim().toUpperCase();
+      const challanPrefix = String(body.challanPrefix ?? "DC").trim().toUpperCase();
+      const footerNote = String(body.footerNote ?? "").trim();
+      if (!companyName) return bad("Company Name is required.");
+      if (!address) return bad("Company Address is required.");
+      if (!phone) return bad("Company Phone is required.");
+      if (!invoicePrefix || !challanPrefix) return bad("Invoice and challan prefixes are required.");
+      if (logoUrl && !/^(https?:\/\/|\/)/i.test(logoUrl)) return bad("Logo URL must be a valid web address or site path.");
+      const timestamp = now();
+      await db.batch([
+        db.prepare("UPDATE system_settings SET company_name=?,address=?,phone=?,website=?,logo_url=?,invoice_prefix=?,challan_prefix=?,footer_note=?,updated_at=? WHERE id=1").bind(companyName, address, phone, website, logoUrl, invoicePrefix, challanPrefix, footerNote, timestamp),
+        db.prepare("INSERT INTO audit_logs (user_id,department_id,action,new_value,remarks,created_at) VALUES (1,1,'Invoice Settings Updated',?,'Company document profile updated',?)").bind(JSON.stringify({ companyName, address, phone, website, invoicePrefix, challanPrefix }), timestamp),
+      ]);
+      return Response.json({ ok: true, message: "Invoice and company settings saved.", state: await getState() });
+    }
+
+    if (["create-customer", "update-customer", "delete-customer"].includes(action)) {
+      const customerId = Number(body.customerId ?? 0);
+      if (action === "delete-customer") {
+        const customer = await db.prepare("SELECT * FROM customers WHERE id=?").bind(customerId).first<Record<string, unknown>>();
+        if (!customer) return bad("Customer not found.", 404);
+        const linked = await db.prepare("SELECT COUNT(*) AS count FROM lots WHERE customer_id=?").bind(customerId).first<{ count: number }>();
+        if (Number(linked?.count ?? 0) > 0) return bad("This customer has linked production lots and cannot be deleted.");
+        const timestamp = now();
+        await db.batch([
+          db.prepare("INSERT INTO audit_logs (user_id,department_id,action,previous_value,remarks,created_at) VALUES (1,1,'Customer Deleted',?,'Customer master record deleted',?)").bind(JSON.stringify(customer), timestamp),
+          db.prepare("DELETE FROM customers WHERE id=?").bind(customerId),
+        ]);
+        return Response.json({ ok: true, message: "Customer deleted.", state: await getState() });
+      }
+
+      const name = String(body.name ?? "").trim();
+      const contact = String(body.contact ?? "").trim();
+      const destination = String(body.destination ?? "").trim();
+      if (!name) return bad("Customer Name is required.");
+      if (!contact) return bad("Customer Phone is required.");
+      if (!destination) return bad("Customer Address / Destination is required.");
+      const duplicate = await db.prepare("SELECT id FROM customers WHERE lower(name)=lower(?) AND id<>?").bind(name, customerId || -1).first<{ id: number }>();
+      if (duplicate) return bad("A customer with this name already exists.");
+      const timestamp = now();
+      if (action === "create-customer") {
+        await db.batch([
+          db.prepare("INSERT INTO customers (name,contact,destination,created_at,updated_at) VALUES (?,?,?,?,?)").bind(name, contact, destination, timestamp, timestamp),
+          db.prepare("INSERT INTO audit_logs (user_id,department_id,action,new_value,remarks,created_at) VALUES (1,1,'Customer Created',?,'Customer master record added',?)").bind(name, timestamp),
+        ]);
+        return Response.json({ ok: true, message: `${name} added to Customers.`, state: await getState() });
+      }
+      const previous = await db.prepare("SELECT * FROM customers WHERE id=?").bind(customerId).first<Record<string, unknown>>();
+      if (!previous) return bad("Customer not found.", 404);
+      await db.batch([
+        db.prepare("UPDATE customers SET name=?,contact=?,destination=?,updated_at=? WHERE id=?").bind(name, contact, destination, timestamp, customerId),
+        db.prepare("INSERT INTO audit_logs (user_id,department_id,action,previous_value,new_value,remarks,created_at) VALUES (1,1,'Customer Updated',?,?,'Customer master record updated',?)").bind(JSON.stringify(previous), JSON.stringify({ name, contact, destination }), timestamp),
+      ]);
+      return Response.json({ ok: true, message: `${name} updated.`, state: await getState() });
+    }
 
     if (action === "create-lot") {
       const designNo = String(body.designNo ?? "").trim().toUpperCase();
@@ -293,7 +359,7 @@ export async function POST(request: Request) {
       const remark = String(body.remarks ?? `${quantity.toLocaleString()} PCS transferred to ${to}.`);
       const statements = [
         db.prepare("INSERT INTO department_transfers (lot_id,design_id,from_department_id,to_department_id,user_id,quantity,remarks,transfer_date,created_at,updated_at) VALUES (?,?,?,?,1,?,?,?,?,?)").bind(lotId, lot.design_id, fromIndex + 1, fromIndex + 2, quantity, remark, timestamp, timestamp, timestamp),
-        db.prepare("UPDATE lots SET current_department=?,status=?,completed_qty=0,remarks=?,updated_at=? WHERE id=?").bind(to, to === "Warehouse" ? "Ready for Dispatch" : "Waiting", remark, timestamp, lotId),
+        db.prepare("UPDATE lots SET current_department=?,status=?,completed_qty=0,remarks=?,updated_at=? WHERE id=?").bind(to, "Waiting", remark, timestamp, lotId),
         db.prepare("INSERT INTO lot_history (lot_id,user_id,department_id,action,quantity,remarks,created_at) VALUES (?,1,?,?,?,?,?)").bind(lotId, fromIndex + 1, `${quantity.toLocaleString()} PCS transferred from ${from} to ${to}`, quantity, remark, timestamp),
         db.prepare("INSERT INTO audit_logs (user_id,department_id,lot_id,design_id,action,previous_value,new_value,quantity,remarks,created_at) VALUES (1,?,?,?,'Department Transfer',?,?,?,?,?)").bind(fromIndex + 1, lotId, lot.design_id, from, to, quantity, remark, timestamp),
       ];
@@ -303,8 +369,8 @@ export async function POST(request: Request) {
         const cartons = Math.ceil(quantity / Math.max(1, Number(packing?.pieces_per_carton ?? 20)));
         const nextReceipt = await db.prepare("SELECT COALESCE(MAX(id),0)+1 AS next FROM warehouse_receipts").first<{ next: number }>();
         statements.push(
-          db.prepare("INSERT INTO warehouse_receipts (receipt_no,lot_id,design_id,department_id,user_id,received_qty,cartons,location,rack_no,received_by,received_date,status,remarks) VALUES (?,?,?,7,1,?,?,'Finished Goods - A',?,'Ayesha Khan',?,'In Stock',?)").bind(`WHR-${String(nextReceipt?.next ?? 1).padStart(5,"0")}`, lotId, lot.design_id, quantity, cartons, `A-${String(lotId).padStart(2,"0")}`, timestamp.slice(0,10), remark),
-          db.prepare("INSERT INTO warehouse_inventory (lot_id,design_id,available_qty,reserved_qty,dispatched_qty,status,updated_at) VALUES (?,?,?,0,0,'In Stock',?) ON CONFLICT(lot_id) DO UPDATE SET available_qty=available_qty+excluded.available_qty,status='In Stock',updated_at=excluded.updated_at").bind(lotId, lot.design_id, quantity, timestamp)
+          db.prepare("INSERT INTO warehouse_receipts (receipt_no,lot_id,design_id,department_id,user_id,received_qty,cartons,location,rack_no,received_by,received_date,status,remarks) VALUES (?,?,?,7,1,?,?,'Receiving Bay','','',?,'Expected',?)").bind(`WHR-${String(nextReceipt?.next ?? 1).padStart(5,"0")}`, lotId, lot.design_id, quantity, cartons, timestamp.slice(0,10), remark),
+          db.prepare("INSERT INTO notifications (user_id,title,message,created_at) VALUES (1,?,?,?)").bind(`${String(lot.lot_no)} awaiting Warehouse receipt`, `${quantity.toLocaleString()} PCS transferred from Packing and require receiving confirmation.`, timestamp)
         );
       } else {
         const targetTable = tableByDepartment[to];
@@ -312,6 +378,32 @@ export async function POST(request: Request) {
       }
       await db.batch(statements);
       return Response.json({ ok: true, message: `${quantity.toLocaleString()} PCS transferred to ${to}.`, state: await getState() });
+    }
+
+    if (action === "receive-warehouse") {
+      const receiptId = Number(body.receiptId ?? 0);
+      const receipt = await db.prepare("SELECT * FROM warehouse_receipts WHERE id=? AND lot_id=?").bind(receiptId, lotId).first<Record<string, unknown>>();
+      if (!receipt) return bad("Warehouse receipt not found.", 404);
+      if (String(receipt.status) !== "Expected") return bad("This warehouse receipt has already been received.");
+      const receivedQty = Number(receipt.received_qty ?? 0);
+      if (!Number.isInteger(receivedQty) || receivedQty <= 0) return bad("Warehouse receipt quantity is invalid.");
+      const receivedBy = String(body.receivedBy ?? "").trim();
+      const location = String(body.location ?? "").trim();
+      const rackNo = String(body.rackNo ?? "").trim();
+      const remarks = String(body.remarks ?? "").trim();
+      if (!receivedBy) return bad("Received By is required.");
+      if (!location) return bad("Warehouse Location is required.");
+      if (!rackNo) return bad("Rack No. is required.");
+      const timestamp = now();
+      await db.batch([
+        db.prepare("UPDATE warehouse_receipts SET received_by=?,received_date=?,location=?,rack_no=?,status='Received',remarks=?,updated_at=? WHERE id=?").bind(receivedBy, String(body.receivedDate ?? timestamp.slice(0,10)), location, rackNo, remarks, timestamp, receiptId),
+        db.prepare("INSERT INTO warehouse_inventory (lot_id,design_id,available_qty,reserved_qty,dispatched_qty,status,updated_at) VALUES (?,?,?,0,0,'In Stock',?) ON CONFLICT(lot_id) DO UPDATE SET available_qty=available_qty+excluded.available_qty,status='In Stock',updated_at=excluded.updated_at").bind(lotId, lot.design_id, receivedQty, timestamp),
+        db.prepare("UPDATE lots SET status='Ready for Dispatch',completed_qty=(SELECT available_qty FROM warehouse_inventory WHERE lot_id=?),remarks=?,updated_at=? WHERE id=?").bind(lotId, `${receivedQty.toLocaleString()} PCS received in Warehouse.`, timestamp, lotId),
+        db.prepare("INSERT INTO lot_history (lot_id,user_id,department_id,action,quantity,remarks,created_at) VALUES (?,1,7,'Received in Warehouse',?,?,?)").bind(lotId, receivedQty, remarks || `${String(receipt.receipt_no)} received and counted.`, timestamp),
+        db.prepare("INSERT INTO audit_logs (user_id,department_id,lot_id,design_id,action,previous_value,new_value,quantity,remarks,created_at) VALUES (1,7,?,?,'Warehouse Received','Expected','Received',?,?,?)").bind(lotId, lot.design_id, receivedQty, remarks, timestamp),
+        db.prepare("INSERT INTO notifications (user_id,title,message,created_at) VALUES (1,?,?,?)").bind(`${String(lot.lot_no)} ready for dispatch`, `${receivedQty.toLocaleString()} PCS received into Warehouse stock.`, timestamp),
+      ]);
+      return Response.json({ ok: true, message: `${String(receipt.receipt_no)} received. Stock is now available for dispatch.`, state: await getState() });
     }
 
     if (action === "dispatch") {

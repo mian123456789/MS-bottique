@@ -38,6 +38,19 @@ export const customers = sqliteTable("customers", {
   ...timestamps,
 });
 
+export const systemSettings = sqliteTable("system_settings", {
+  id: integer("id").primaryKey(),
+  companyName: text("company_name").notNull().default("MS Boutique"),
+  address: text("address").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  website: text("website").notNull().default(""),
+  logoUrl: text("logo_url").notNull().default(""),
+  invoicePrefix: text("invoice_prefix").notNull().default("INV"),
+  challanPrefix: text("challan_prefix").notNull().default("DC"),
+  footerNote: text("footer_note").notNull().default("Thank you for choosing MS Boutique."),
+  ...timestamps,
+});
+
 export const designs = sqliteTable("designs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   designNo: text("design_no").notNull().unique(),
