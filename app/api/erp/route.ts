@@ -6,6 +6,8 @@ const workflow = ["Design", "Fabric / Store", "Cutting", "Embroidery", "Printing
 
 const schema = [
   `CREATE TABLE IF NOT EXISTS departments (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, code TEXT NOT NULL UNIQUE, sequence INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, permissions TEXT NOT NULL DEFAULT '[]')`,
+  `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_id INTEGER, department_id INTEGER, status TEXT NOT NULL DEFAULT 'Active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(role_id) REFERENCES roles(id), FOREIGN KEY(department_id) REFERENCES departments(id))`,
   `CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, contact TEXT, email TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS designs (id INTEGER PRIMARY KEY AUTOINCREMENT, design_no TEXT NOT NULL UNIQUE, design_name TEXT NOT NULL, customer_id INTEGER, brand TEXT, category TEXT, season TEXT, fabrication TEXT NOT NULL, fabric_name TEXT, fabric_composition TEXT, gsm REAL, color TEXT, size_range TEXT, sample_quantity INTEGER DEFAULT 0, order_quantity INTEGER NOT NULL, production_quantity INTEGER NOT NULL, order_date TEXT, start_date TEXT, due_date TEXT, priority TEXT NOT NULL DEFAULT 'Medium', factory TEXT, remarks TEXT, image_url TEXT, tech_pack_url TEXT, status TEXT NOT NULL DEFAULT 'Draft', workflow TEXT NOT NULL, created_by INTEGER, updated_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS production_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, design_id INTEGER NOT NULL UNIQUE, current_department_id INTEGER, current_department TEXT NOT NULL, order_qty INTEGER NOT NULL, completed_qty INTEGER NOT NULL DEFAULT 0, pending_qty INTEGER NOT NULL, progress INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, assigned_employee TEXT, supervisor TEXT, delay_days INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
@@ -21,14 +23,23 @@ const schema = [
   `CREATE INDEX IF NOT EXISTS idx_audit_design ON audit_logs(design_id, created_at)`,
 ];
 
+async function getActorId(db: D1) {
+  const actor = await db.prepare("SELECT id FROM users WHERE email='admin@msboutique.com'").first<{ id: number }>();
+  if (!actor) throw new Error("System administrator account is unavailable.");
+  return actor.id;
+}
+
 async function ensureSchema(db: D1) {
   await db.batch(schema.map((statement) => db.prepare(statement)));
+  await db.batch(workflow.map((name, index) => db.prepare("INSERT OR IGNORE INTO departments (name, code, sequence) VALUES (?, ?, ?)").bind(name, name.toUpperCase().replace(/[^A-Z]+/g, "_"), index + 1)));
+  await db.prepare("INSERT OR IGNORE INTO roles (name, permissions) VALUES ('Super Admin', '[\"*\"]')").run();
+  await db.prepare("INSERT OR IGNORE INTO users (email, name, role_id, department_id, status) VALUES ('admin@msboutique.com', 'Areeba Raza', (SELECT id FROM roles WHERE name='Super Admin'), NULL, 'Active')").run();
+  const actorId = await getActorId(db);
   await db.prepare("UPDATE designs SET category=CASE WHEN category LIKE '%Eastern%' THEN 'Eastern' WHEN category LIKE '%Formal%' THEN 'Formal' ELSE 'Western' END WHERE category NOT IN ('Eastern','Western','Formal')").run();
   const result = await db.prepare("SELECT COUNT(*) AS count FROM designs").first<{ count: number }>();
   if (Number(result?.count ?? 0) > 0) return;
 
   await db.batch([
-    ...workflow.map((name, index) => db.prepare("INSERT OR IGNORE INTO departments (name, code, sequence) VALUES (?, ?, ?)").bind(name, name.toUpperCase().replace(/[^A-Z]+/g, "_"), index + 1)),
     db.prepare("INSERT OR IGNORE INTO customers (code, name, contact, email) VALUES ('CUS-001','Maison Avenue','Ayesha Khan','production@maisonavenue.com')"),
     db.prepare("INSERT OR IGNORE INTO customers (code, name, contact, email) VALUES ('CUS-002','Northline Outfitters','Hamza Ali','buying@northline.com')"),
     db.prepare("INSERT OR IGNORE INTO customers (code, name, contact, email) VALUES ('CUS-003','Lumière Studio','Mariam Noor','orders@lumiere.studio')"),
@@ -46,7 +57,7 @@ async function ensureSchema(db: D1) {
   ];
   for (const row of demo) {
     const [designNo, designName, customerCode, brand, category, season, fabrication, fabricName, composition, gsm, color, sizeRange, orderQty, productionQty, orderDate, startDate, dueDate, priority, factory, remarks, status, currentDepartment, completedQty, progress, delayDays, assigned, supervisor] = row;
-    const inserted = await db.prepare(`INSERT INTO designs (design_no,design_name,customer_id,brand,category,season,fabrication,fabric_name,fabric_composition,gsm,color,size_range,order_quantity,production_quantity,order_date,start_date,due_date,priority,factory,remarks,status,workflow,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1) RETURNING id`).bind(designNo, designName, customerIds[String(customerCode)], brand, category, season, fabrication, fabricName, composition, gsm, color, sizeRange, orderQty, productionQty, orderDate, startDate, dueDate, priority, factory, remarks, status, JSON.stringify(workflow)).first<{ id: number }>();
+    const inserted = await db.prepare(`INSERT INTO designs (design_no,design_name,customer_id,brand,category,season,fabrication,fabric_name,fabric_composition,gsm,color,size_range,order_quantity,production_quantity,order_date,start_date,due_date,priority,factory,remarks,status,workflow,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`).bind(designNo, designName, customerIds[String(customerCode)], brand, category, season, fabrication, fabricName, composition, gsm, color, sizeRange, orderQty, productionQty, orderDate, startDate, dueDate, priority, factory, remarks, status, JSON.stringify(workflow), actorId, actorId).first<{ id: number }>();
     await db.prepare(`INSERT INTO production_orders (design_id,current_department,current_department_id,order_qty,completed_qty,pending_qty,progress,status,assigned_employee,supervisor,delay_days) VALUES (?,?,(SELECT id FROM departments WHERE name=?),?,?,?,?,?,?,?,?)`).bind(inserted!.id, currentDepartment, currentDepartment, orderQty, completedQty, Number(orderQty) - Number(completedQty), progress, status, assigned, supervisor, delayDays).run();
   }
 
@@ -64,7 +75,7 @@ async function ensureSchema(db: D1) {
     db.prepare("INSERT INTO notifications (type,title,message) VALUES ('danger','Low stock','Polyester Thread 40/2 is below minimum stock.')"),
   ]);
   for (let i = 1; i <= 6; i++) {
-    await db.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,new_value,ip_address,device) VALUES (1,?,'CREATE','design',?,'Production order initialized','192.168.10.24','Web / Chrome')").bind(i, String(i)).run();
+    await db.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,new_value,ip_address,device) VALUES (?,?,'CREATE','design',?,'Production order initialized','192.168.10.24','Web / Chrome')").bind(actorId, i, String(i)).run();
   }
   await db.prepare("PRAGMA optimize").run();
 }
@@ -99,6 +110,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     await ensureSchema(env.DB);
+    const actorId = await getActorId(env.DB);
     const body = await request.json() as Record<string, unknown>;
     const action = String(body.action ?? "");
 
@@ -125,17 +137,17 @@ export async function POST(request: Request) {
         const customer = "MS Boutique";
         let customerRow = await env.DB.prepare("SELECT id FROM customers WHERE name=?").bind(customer).first<{ id: number }>();
         if (!customerRow) customerRow = await env.DB.prepare("INSERT INTO customers (code,name) VALUES (?,?) RETURNING id").bind(`CUS-${Date.now()}`, customer).first<{ id: number }>();
-        const inserted = await env.DB.prepare(`INSERT INTO designs (design_no,design_name,customer_id,brand,category,season,fabrication,fabric_name,fabric_composition,gsm,color,size_range,sample_quantity,order_quantity,production_quantity,order_date,start_date,due_date,priority,factory,remarks,status,workflow,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1) RETURNING id`).bind(designNo,designName,customerRow!.id,values.brand ?? "MS Boutique",category,values.season ?? "2026",fabrication,values.fabricName ?? fabrication,values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",Number(values.sampleQuantity ?? 0),orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",JSON.stringify(values.workflow ?? workflow),1).first<{ id: number }>();
+        const inserted = await env.DB.prepare(`INSERT INTO designs (design_no,design_name,customer_id,brand,category,season,fabrication,fabric_name,fabric_composition,gsm,color,size_range,sample_quantity,order_quantity,production_quantity,order_date,start_date,due_date,priority,factory,remarks,status,workflow,created_by,updated_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`).bind(designNo,designName,customerRow!.id,values.brand ?? "MS Boutique",category,values.season ?? "2026",fabrication,values.fabricName ?? fabrication,values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",Number(values.sampleQuantity ?? 0),orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",JSON.stringify(values.workflow ?? workflow),actorId,actorId).first<{ id: number }>();
         designId = inserted!.id;
         await env.DB.prepare("INSERT INTO production_orders (design_id,current_department,current_department_id,order_qty,completed_qty,pending_qty,progress,status,assigned_employee,supervisor) VALUES (?,'Design',(SELECT id FROM departments WHERE name='Design'),?,0,?,5,?,'Unassigned','Unassigned')").bind(designId,orderQty,orderQty,values.status ?? "Approved").run();
       } else {
         const old = await env.DB.prepare("SELECT * FROM designs WHERE id=?").bind(designId).first();
         if (!old) return error("Error: Design record not found.", 404);
-        await env.DB.prepare(`UPDATE designs SET design_no=?, design_name=?, category=?, fabrication=?, fabric_name=?, fabric_composition=?, gsm=?, color=?, size_range=?, order_quantity=?, production_quantity=?, order_date=?, start_date=?, due_date=?, priority=?, factory=?, remarks=?, status=?, updated_by=1, updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(designNo,designName,category,fabrication,values.fabricName ?? "",values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",designId).run();
+        await env.DB.prepare(`UPDATE designs SET design_no=?, design_name=?, category=?, fabrication=?, fabric_name=?, fabric_composition=?, gsm=?, color=?, size_range=?, order_quantity=?, production_quantity=?, order_date=?, start_date=?, due_date=?, priority=?, factory=?, remarks=?, status=?, updated_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(designNo,designName,category,fabrication,values.fabricName ?? "",values.fabricComposition ?? "",Number(values.gsm ?? 0),values.color ?? "",values.sizeRange ?? "",orderQty,productionQty,values.orderDate ?? "",values.startDate ?? "",values.dueDate ?? "",values.priority ?? "Medium",values.factory ?? "MS Factory Lahore",values.remarks ?? "",values.status ?? "Approved",actorId,designId).run();
         await env.DB.prepare("UPDATE production_orders SET order_qty=?, pending_qty=MAX(0,?-completed_qty), status=?, updated_at=CURRENT_TIMESTAMP WHERE design_id=?").bind(orderQty,orderQty,values.status ?? "Approved",designId).run();
-        await env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,old_value,new_value,ip_address,device) VALUES (1,?,'UPDATE','design',?,?,?,'192.168.10.24','Web / Chrome')").bind(designId,String(designId),JSON.stringify(old),JSON.stringify(values)).run();
+        await env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,old_value,new_value,ip_address,device) VALUES (?,?,'UPDATE','design',?,?,?,'192.168.10.24','Web / Chrome')").bind(actorId,designId,String(designId),JSON.stringify(old),JSON.stringify(values)).run();
       }
-      if (action === "createDesign") await env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,new_value,ip_address,device) VALUES (1,?,'CREATE','design',?,'New production order created','192.168.10.24','Web / Chrome')").bind(designId,String(designId)).run();
+      if (action === "createDesign") await env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,new_value,ip_address,device) VALUES (?,?,'CREATE','design',?,'New production order created','192.168.10.24','Web / Chrome')").bind(actorId,designId,String(designId)).run();
       return Response.json(await getPayload(env.DB), { status: action === "createDesign" ? 201 : 200 });
     }
 
@@ -185,9 +197,9 @@ export async function POST(request: Request) {
         const packing = await env.DB.prepare("SELECT completed_qty FROM department_records WHERE design_id=? AND department='Packing' ORDER BY id DESC LIMIT 1").bind(designId).first<{ completed_qty: number }>();
         if (packing && completed > Number(packing.completed_qty)) return error("Error: Dispatch quantity cannot exceed packing quantity.");
       }
-      await env.DB.prepare(`INSERT INTO department_records (design_id,production_order_id,department,received_qty,target_qty,completed_qty,passed_qty,rejected_qty,rework_qty,pending_qty,start_date,completion_date,supervisor,operator,status,remarks,details,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`).bind(designId,order.id,department,received,Number(values.targetQty ?? received),completed,passed,rejected,rework,Math.max(0,received-completed),values.startDate ?? "",values.completionDate ?? "",values.supervisor ?? "",values.operator ?? "",values.status ?? "Running",values.remarks ?? "",JSON.stringify(values)).run();
+      await env.DB.prepare(`INSERT INTO department_records (design_id,production_order_id,department,received_qty,target_qty,completed_qty,passed_qty,rejected_qty,rework_qty,pending_qty,start_date,completion_date,supervisor,operator,status,remarks,details,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(designId,order.id,department,received,Number(values.targetQty ?? received),completed,passed,rejected,rework,Math.max(0,received-completed),values.startDate ?? "",values.completionDate ?? "",values.supervisor ?? "",values.operator ?? "",values.status ?? "Running",values.remarks ?? "",JSON.stringify(values),actorId).run();
       await env.DB.prepare("UPDATE production_orders SET completed_qty=?, pending_qty=MAX(0,order_qty-?), status=?, supervisor=?, updated_at=CURRENT_TIMESTAMP WHERE design_id=?").bind(completed,completed,values.status ?? "Running",values.supervisor ?? "",designId).run();
-      await env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,new_value,ip_address,device) VALUES (1,?,'UPDATE',?,? ,?,'192.168.10.24','Web / Chrome')").bind(designId,`${department} record`,String(designId),JSON.stringify(values)).run();
+      await env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,new_value,ip_address,device) VALUES (?,?,'UPDATE',?,? ,?,'192.168.10.24','Web / Chrome')").bind(actorId,designId,`${department} record`,String(designId),JSON.stringify(values)).run();
       return Response.json(await getPayload(env.DB), { status: 201 });
     }
 
@@ -207,9 +219,9 @@ export async function POST(request: Request) {
       }
       const newProgress = Math.min(100, Math.max(Number(order.progress), Math.round(((workflow.indexOf(nextDepartment) + 0.25) / workflow.length) * 100)));
       await env.DB.batch([
-        env.DB.prepare("INSERT INTO department_transfers (design_id,production_order_id,from_department,to_department,from_department_id,to_department_id,quantity,transferred_by,remarks) VALUES (?,?,?, ?,(SELECT id FROM departments WHERE name=?),(SELECT id FROM departments WHERE name=?),?,1,?)").bind(designId,order.id,currentDepartment,nextDepartment,currentDepartment,nextDepartment,quantity,body.remarks ?? "Authorized transfer"),
+        env.DB.prepare("INSERT INTO department_transfers (design_id,production_order_id,from_department,to_department,from_department_id,to_department_id,quantity,transferred_by,remarks) VALUES (?,?,?, ?,(SELECT id FROM departments WHERE name=?),(SELECT id FROM departments WHERE name=?),?,?,?)").bind(designId,order.id,currentDepartment,nextDepartment,currentDepartment,nextDepartment,quantity,actorId,body.remarks ?? "Authorized transfer"),
         env.DB.prepare("UPDATE production_orders SET current_department=?, current_department_id=(SELECT id FROM departments WHERE name=?), completed_qty=?, pending_qty=MAX(0,order_qty-?), progress=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE design_id=?").bind(nextDepartment,nextDepartment,quantity,quantity,newProgress,nextDepartment === "Dispatch" ? "Ready for Dispatch" : "In Production",designId),
-        env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,old_value,new_value,ip_address,device) VALUES (1,?,'TRANSFER','production_order',?,?,?,'192.168.10.24','Web / Chrome')").bind(designId,String(order.id),currentDepartment,`${quantity} PCS to ${nextDepartment}`),
+        env.DB.prepare("INSERT INTO audit_logs (user_id,design_id,action,entity,entity_id,old_value,new_value,ip_address,device) VALUES (?,?,'TRANSFER','production_order',?,?,?,'192.168.10.24','Web / Chrome')").bind(actorId,designId,String(order.id),currentDepartment,`${quantity} PCS to ${nextDepartment}`),
         env.DB.prepare("INSERT INTO notifications (design_id,type,title,message) VALUES (?,'success','Department transfer',?)").bind(designId,`${quantity.toLocaleString()} PCS transferred to ${nextDepartment}.`),
       ]);
       return Response.json(await getPayload(env.DB));
@@ -219,6 +231,7 @@ export async function POST(request: Request) {
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Unexpected error";
     if (message.includes("UNIQUE")) return error("Error: A record with this value already exists.", 409);
+    if (message.includes("FOREIGN KEY")) return error("Error: A required related record is missing. Please refresh and try again.", 409);
     return error(`Unable to save: ${message}`, 500);
   }
 }
