@@ -586,6 +586,8 @@ function DepartmentPage({ state, department, setModal }: PageProps & { departmen
 
 function GatepassPage({ state, setModal, user }: PageProps) {
   const [search, setSearch] = useState(""); const [status, setStatus] = useState("");
+  // Several gate passes can be billed together on one invoice.
+  const [selected, setSelected] = useState<number[]>([]);
   const rows = state.gatepasses.filter((item) => (!search || `${item.gatepass_no} ${item.lot_no} ${item.design_no} ${item.vehicle_no}`.toLowerCase().includes(search.toLowerCase())) && (!status || item.status === status));
   const pending = state.gatepasses.filter((item) => item.status === "Pending"); const issued = state.gatepasses.filter((item) => item.status === "Issued"); const released = state.gatepasses.filter((item) => item.status === "Released");
   const lotFor = (item: Row) => state.lots.find((lot) => number(lot.id) === number(item.lot_id));
@@ -593,13 +595,24 @@ function GatepassPage({ state, setModal, user }: PageProps) {
   // this lot; with no rate the value columns print blank for hand completion.
   const rateFor = (lotId: unknown) => number(state.shopShipments.find((row) => number(row.lot_id) === number(lotId))?.sale_rate
     ?? state.shopInventory.find((row) => number(row.lot_id) === number(lotId))?.sale_rate);
+  const toggle = (id: number) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  const chosen = state.gatepasses.filter((item) => selected.includes(number(item.id)));
+  const chosenQty = chosen.reduce((sum, item) => sum + number(item.quantity), 0);
+  const chosenValue = chosen.reduce((sum, item) => sum + number(item.quantity) * rateFor(item.lot_id), 0);
   return <div className="page-stack"><SectionHead eyebrow="PACKING TO WAREHOUSE" title="Gatepass" detail="Every lot leaving Packing needs an issued gate pass before it can be shipped to the Warehouse." action={<div className="action-group"><button className="button secondary" onClick={() => exportRows(state.gatepasses, "MS-Boutique-Gatepass-Register")}><Download size={16} /> Excel</button><button className="button secondary" onClick={() => window.print()}><FileText size={16} /> PDF</button><button className="button secondary" onClick={() => window.print()}><Printer size={16} /> Print</button></div>} />
     <section className="warehouse-strip"><article><ClipboardList /><span>Awaiting gate pass<b>{fmt(pending.reduce((sum, item) => sum + number(item.quantity), 0))} PCS</b></span></article><article><DoorOpen /><span>Issued, not released<b>{fmt(issued.reduce((sum, item) => sum + number(item.quantity), 0))} PCS</b></span></article><article><Truck /><span>Released to Warehouse<b>{fmt(released.reduce((sum, item) => sum + number(item.quantity), 0))} PCS</b></span></article><article><CheckCircle2 /><span>Total gate passes<b>{state.gatepasses.length}</b></span></article></section>
     <div className="stage-flow"><span className="done">{departmentIcon("Packing")}<b>Packing</b><small>Cartons closed</small></span><ArrowRight size={16} /><span className="current"><DoorOpen size={15} /><b>Gatepass</b><small>Issue &amp; release</small></span><ArrowRight size={16} /><span className="pending">{departmentIcon("Warehouse")}<b>Warehouse</b><small>Receive &amp; count</small></span></div>
     <div className="filter-bar"><div className="filter-search"><Search size={17} /><input placeholder="Search gate pass, lot, design or vehicle…" value={search} onChange={(e) => setSearch(e.target.value)} /></div><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All gate pass statuses</option>{["Pending", "Issued", "Released"].map((item) => <option key={item}>{item}</option>)}</select>{(search || status) && <button className="clear-filters" onClick={() => { setSearch(""); setStatus(""); }}><X size={14} /> Clear</button>}</div>
+    {selected.length > 0 && <div className="combine-bar">
+      <div><b>{selected.length} gate pass{selected.length === 1 ? "" : "es"} selected</b><small>{fmt(chosenQty)} PCS across {new Set(chosen.map((item) => String(item.lot_no))).size} lot{new Set(chosen.map((item) => String(item.lot_no))).size === 1 ? "" : "s"}{chosenValue > 0 ? ` · ${money(chosenValue)} declared value` : " · no rates set, values print blank"}</small></div>
+      <div className="action-group">
+        <button className="button ghost" onClick={() => setSelected([])}><X size={15} /> Clear</button>
+        <button className="button primary" onClick={() => printCombinedInvoice(chosen, state.settings, rateFor)}><ReceiptText size={16} /> Generate Combined Invoice</button>
+      </div>
+    </div>}
     <article className="panel table-panel gatepass-table"><div className="panel-head"><div><span className="eyebrow">GATE PASS REGISTER</span><h3>Warehouse shipment gate passes</h3></div><span className="record-count">{pending.length} pending · {issued.length} issued · {released.length} released</span></div>
-      <div className="table-scroll"><table><thead><tr><th>Gate Pass No.</th><th>Lot / Design</th><th>Customer</th><th>QTY</th><th>Cartons</th><th>Route</th><th>Vehicle / Driver</th><th>Issued / Approved</th><th>Gate Pass Date</th><th>Security</th><th>Status</th><th>Action</th></tr></thead>
-        <tbody>{rows.map((item) => { const lot = lotFor(item); return <tr key={String(item.id)}><td><button className="table-primary" onClick={() => lot && setModal({ type: "detail", lot })}>{String(item.gatepass_no)}<small>{String(item.purpose)}</small></button></td><td>{String(item.lot_no)}<small className="cell-sub">{String(item.design_no)} · {String(item.size_range)}</small></td><td>{String(item.customer)}</td><td><b>{fmt(item.quantity)}</b> PCS</td><td>{fmt(item.cartons)}</td><td><span className="route-cell">{String(item.from_department)} <ArrowRight size={11} /> {String(item.to_department)}</span></td><td>{String(item.vehicle_no || "—")}<small className="cell-sub">{String(item.driver_name || "Driver not assigned")}</small></td><td>{String(item.issued_by || "—")}<small className="cell-sub">{String(item.approved_by || "Awaiting approval")}</small></td><td>{formatDate(item.gatepass_date)}<small className="cell-sub">{item.release_date ? `Released ${formatDate(item.release_date)}` : "Not released"}</small></td><td><StatusBadge status={item.security_check} /></td><td><StatusBadge status={item.status} /></td>
+      <div className="table-scroll"><table><thead><tr><th className="tick-col"><input type="checkbox" aria-label="Select all gate passes" checked={rows.length > 0 && rows.every((item) => selected.includes(number(item.id)))} onChange={(event) => setSelected(event.target.checked ? rows.map((item) => number(item.id)) : [])} /></th><th>Gate Pass No.</th><th>Lot / Design</th><th>Customer</th><th>QTY</th><th>Cartons</th><th>Route</th><th>Vehicle / Driver</th><th>Issued / Approved</th><th>Gate Pass Date</th><th>Security</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody>{rows.map((item) => { const lot = lotFor(item); return <tr key={String(item.id)} className={cx(selected.includes(number(item.id)) && "row-selected")}><td className="tick-col"><input type="checkbox" aria-label={`Select ${String(item.gatepass_no)}`} checked={selected.includes(number(item.id))} onChange={() => toggle(number(item.id))} /></td><td><button className="table-primary" onClick={() => lot && setModal({ type: "detail", lot })}>{String(item.gatepass_no)}<small>{String(item.purpose)}</small></button></td><td>{String(item.lot_no)}<small className="cell-sub">{String(item.design_no)} · {String(item.size_range)}</small></td><td>{String(item.customer)}</td><td><b>{fmt(item.quantity)}</b> PCS</td><td>{fmt(item.cartons)}</td><td><span className="route-cell">{String(item.from_department)} <ArrowRight size={11} /> {String(item.to_department)}</span></td><td>{String(item.vehicle_no || "—")}<small className="cell-sub">{String(item.driver_name || "Driver not assigned")}</small></td><td>{String(item.issued_by || "—")}<small className="cell-sub">{String(item.approved_by || "Awaiting approval")}</small></td><td>{formatDate(item.gatepass_date)}<small className="cell-sub">{item.release_date ? `Released ${formatDate(item.release_date)}` : "Not released"}</small></td><td><StatusBadge status={item.security_check} /></td><td><StatusBadge status={item.status} /></td>
           <td><div className="row-actions">
             {String(item.status) !== "Pending" && <select className="print-select" aria-label={`Print ${String(item.gatepass_no)}`} value="" onChange={(event) => { const choice = event.target.value; event.target.value = ""; if (choice === "gatepass") printMovementGatepass(item, state.settings); if (choice === "invoice") printInvoiceGatepass(item, state.settings, rateFor(item.lot_id)); }}>
               <option value="">Print…</option>
@@ -1900,6 +1913,71 @@ function printInvoiceGatepass(gatepass: Row, settings: Row, rate: number) {
       <section class="remarks"><small>REMARKS</small><p>${escapeHtml(gatepass.remarks || "Cartons sealed and released for warehouse shipment.")}</p></section>
       <section class="signatures"><div>Issued By<br>${escapeHtml(gatepass.issued_by || "")}</div><div>Approved By<br>${escapeHtml(gatepass.approved_by || "")}</div><div>Driver Signature</div><div>Gate Security</div></section>
       <footer class="footer">${escapeHtml(settings.company_name || "MS Boutique")} · Invoice Gate Pass ${escapeHtml(gatepass.gatepass_no)}${rate > 0 ? "" : " · declared value to be completed by hand"}</footer>
+    </main>`);
+}
+
+// Several gate passes billed as one document: every lot becomes a line, with a
+// single set of totals underneath.
+function printCombinedInvoice(gatepasses: Row[], settings: Row, rateFor: (lotId: unknown) => number) {
+  if (!gatepasses.length) { window.alert("Select at least one gate pass first."); return; }
+  const priced = gatepasses.map((row) => { const rate = rateFor(row.lot_id); const quantity = number(row.quantity); return { row, rate, quantity, amount: round2(quantity * rate) }; });
+  // A line with no rate prints a ruled blank, never "Rs 0" — a zero would read as
+  // a genuine price. If any line is unpriced the total is flagged as partial.
+  const unpriced = priced.filter((line) => line.rate <= 0);
+  const totals = {
+    quantity: priced.reduce((sum, line) => sum + line.quantity, 0),
+    cartons: priced.reduce((sum, line) => sum + number(line.row.cartons), 0),
+    amount: round2(priced.reduce((sum, line) => sum + line.amount, 0)),
+  };
+  const blank = `<span class="blank"></span>`;
+  const cell = (value: string, rate: number) => rate > 0 ? value : blank;
+  const customers = [...new Set(priced.map((line) => String(line.row.customer || "")).filter(Boolean))];
+  const reference = `CINV-${priced.map((line) => String(line.row.gatepass_no).replace(/\D/g, "")).join("-")}`;
+
+  printDocument(`Combined Invoice ${reference}`,
+    `@page{size:A4;margin:13mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#172333;margin:0;font-size:12px}
+     .sheet{border:1px solid #cad2da;padding:26px}
+     header{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #2f9e44;padding-bottom:16px}
+     header img,.mark{width:60px;height:60px;object-fit:contain;border-radius:10px}
+     .brand{display:flex;gap:14px;align-items:center}
+     .mark{display:grid;place-items:center;background:#2f9e44;color:#fff;font-size:21px;font-weight:800}
+     h1{font-size:21px;margin:0 0 5px}header p,header small{margin:0;color:#647184;display:block}
+     .type{text-align:right}.type span{display:block;color:#2f9e44;font-weight:800;letter-spacing:1.4px;font-size:10px}
+     .type b{display:block;font-size:18px;margin:6px 0}
+     .meta{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid #dbe1e6;margin:20px 0}
+     .meta div{padding:11px;border-right:1px solid #dbe1e6}.meta div:last-child{border:0}
+     .meta small{display:block;color:#798594;font-size:9px;font-weight:700;letter-spacing:.6px}.meta b{display:block;margin-top:5px}
+     table{width:100%;border-collapse:collapse;margin-bottom:16px}
+     th{background:#14622c;color:#fff;text-align:left;padding:9px;font-size:10px}
+     td{border:1px solid #dbe1e6;padding:10px}
+     td.n,th.n{text-align:right}
+     .blank{display:inline-block;min-width:70px;border-bottom:1px dotted #8b97a5}
+     tr.total td{background:#e9f6ec;font-weight:800;color:#14622c;font-size:13px}
+     .note{background:#f2f7f3;padding:12px;margin-bottom:22px;font-size:11px}
+     .signatures{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:46px}
+     .signatures div{border-top:1px solid #697687;padding-top:8px;text-align:center;font-size:10px}
+     .footer{text-align:center;border-top:1px solid #dbe1e6;margin-top:26px;padding-top:12px;color:#6f7a89;font-size:10px}`,
+    `<main class="sheet">
+      <header><div class="brand">${settings.logo_url ? `<img src="${escapeHtml(settings.logo_url)}" alt="">` : `<div class="mark">MS</div>`}
+        <div><h1>${escapeHtml(settings.company_name || "MS Boutique")}</h1><p>${escapeHtml(settings.address || "")}</p><small>${escapeHtml(settings.phone || "")}</small></div></div>
+        <div class="type"><span>COMBINED INVOICE</span><b>${escapeHtml(reference)}</b><small>${escapeHtml(formatDate(today))}</small></div></header>
+      <section class="meta">
+        <div><small>GATE PASSES</small><b>${priced.length}</b></div>
+        <div><small>LOTS</small><b>${new Set(priced.map((line) => String(line.row.lot_no))).size}</b></div>
+        <div><small>TOTAL QUANTITY</small><b>${fmt(totals.quantity)} PCS</b></div>
+        <div><small>CUSTOMER</small><b>${escapeHtml(customers.length === 1 ? customers[0] : `${customers.length} customers`)}</b></div>
+      </section>
+      <table><thead><tr><th class="n">#</th><th>Gate Pass</th><th>Lot No.</th><th>Design</th><th>Fabrication</th><th>Size</th><th class="n">Qty</th><th class="n">Cartons</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead>
+        <tbody>${priced.map((line, index) => `<tr>
+          <td class="n">${index + 1}</td><td><b>${escapeHtml(line.row.gatepass_no)}</b><br>${escapeHtml(formatDate(line.row.gatepass_date))}</td>
+          <td>${escapeHtml(line.row.lot_no)}</td><td><b>${escapeHtml(line.row.design_no)}</b></td>
+          <td>${escapeHtml(line.row.fabrication)}</td><td>${escapeHtml(line.row.size_range)}</td>
+          <td class="n">${fmt(line.quantity)}</td><td class="n">${fmt(line.row.cartons)}</td>
+          <td class="n">${cell(money(line.rate), line.rate)}</td><td class="n">${cell(money(line.amount), line.rate)}</td></tr>`).join("")}
+        <tr class="total"><td colspan="6">Total — ${priced.length} gate pass${priced.length === 1 ? "" : "es"}${unpriced.length ? ` (${unpriced.length} awaiting a rate)` : ""}</td><td class="n">${fmt(totals.quantity)} PCS</td><td class="n">${fmt(totals.cartons)}</td><td class="n"></td><td class="n">${totals.amount > 0 ? money(totals.amount) : blank}</td></tr></tbody></table>
+      <section class="note">Vehicles: ${escapeHtml([...new Set(priced.map((line) => String(line.row.vehicle_no || "—")))].join(", "))} · Drivers: ${escapeHtml([...new Set(priced.map((line) => String(line.row.driver_name || "—")))].join(", "))}</section>
+      <section class="signatures"><div>Prepared By</div><div>Approved By</div><div>Driver Signature</div><div>Gate Security</div></section>
+      <footer class="footer">${escapeHtml(settings.company_name || "MS Boutique")} · Combined invoice for ${priced.map((line) => escapeHtml(line.row.gatepass_no)).join(", ")}${unpriced.length ? ` · ${unpriced.length} line${unpriced.length === 1 ? "" : "s"} to be priced by hand` : ""}</footer>
     </main>`);
 }
 

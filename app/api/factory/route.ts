@@ -633,6 +633,11 @@ export async function POST(request: Request) {
       if (role === "Staff" && !permissions.length) return bad("Choose at least one page this user may open.");
       const clash = await db.prepare("SELECT id FROM users WHERE lower(username)=lower(?) AND id<>?").bind(username, userId || -1).first<{ id: number }>();
       if (clash) return bad("That username is already taken.");
+      // Email is optional in the form, but the column is unique — an empty box must
+      // not become a shared blank value that blocks the next user.
+      const email = String(body.email ?? "").trim() || `${username}@msboutique.com`;
+      const emailClash = await db.prepare("SELECT id FROM users WHERE lower(email)=lower(?) AND id<>?").bind(email, userId || -1).first<{ id: number }>();
+      if (emailClash) return bad(`That email address is already used by another login. Leave it blank or enter a different one.`);
 
       if (userId) {
         const previous = await db.prepare("SELECT * FROM users WHERE id=?").bind(userId).first<Record<string, unknown>>();
@@ -642,7 +647,7 @@ export async function POST(request: Request) {
         const hash = password ? await hashPassword(password) : String(previous.password_hash);
         await db.batch([
           db.prepare("UPDATE users SET name=?,username=?,email=?,password_hash=?,role=?,shop_id=?,permissions=?,active=?,updated_at=? WHERE id=?")
-            .bind(name, username, String(body.email ?? previous.email ?? `${username}@msboutique.com`), hash, role, role === "Shop" ? shopId : null, JSON.stringify(permissions), Number(body.active ?? 1) ? 1 : 0, timestamp, userId),
+            .bind(name, username, email, hash, role, role === "Shop" ? shopId : null, JSON.stringify(permissions), Number(body.active ?? 1) ? 1 : 0, timestamp, userId),
           db.prepare("INSERT INTO audit_logs (user_id,department_id,action,previous_value,new_value,remarks,created_at) VALUES (1,1,'User Updated',?,?,'Access changed by owner',?)").bind(String(previous.username), `${username} · ${role}`, timestamp),
         ]);
         return Response.json({ ok: true, message: `${name} updated.${password ? " New password set." : ""}`, state: await state() });
@@ -652,7 +657,7 @@ export async function POST(request: Request) {
       const hash = await hashPassword(password);
       await db.batch([
         db.prepare("INSERT INTO users (name,email,username,password_hash,role,role_id,department_id,shop_id,permissions,active,created_at,updated_at) VALUES (?,?,?,?,?,1,1,?,?,1,?,?)")
-          .bind(name, String(body.email ?? `${username}@msboutique.com`), username, hash, role, role === "Shop" ? shopId : null, JSON.stringify(permissions), timestamp, timestamp),
+          .bind(name, email, username, hash, role, role === "Shop" ? shopId : null, JSON.stringify(permissions), timestamp, timestamp),
         db.prepare("INSERT INTO audit_logs (user_id,department_id,action,new_value,remarks,created_at) VALUES (1,1,'User Created',?,'Login created by owner',?)").bind(`${username} · ${role}`, timestamp),
         notify("Owner", "Users", "success", `${name} can now sign in`, role === "Shop" ? `${username} opens the shop point of sale only.` : `${username} has access to ${permissions.length} page${permissions.length === 1 ? "" : "s"}.`, "Users & Permissions", timestamp),
       ]);
@@ -1664,6 +1669,24 @@ export async function POST(request: Request) {
     return bad("Unsupported action.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to save factory data.";
-    return bad(message.includes("UNIQUE") ? "Lot No. already exists." : message, 500);
+    // Name the column that actually clashed instead of blaming lot numbers for every
+    // unique violation, which sent users hunting in the wrong place.
+    const clash = /UNIQUE constraint failed:\s*([\w.]+)/i.exec(message)?.[1];
+    if (clash) {
+      const field: Record<string, string> = {
+        "lots.lot_no": "That Lot No. already exists.",
+        "users.username": "That username is already taken.",
+        "users.email": "That email address is already used by another login.",
+        "designs.design_no": "That Design No. already exists.",
+        "shops.shop_code": "That shop code already exists.",
+        "shop_sales.invoice_no": "That invoice number already exists.",
+        "gatepasses.gatepass_no": "That gate pass number already exists.",
+        "warehouse_receipts.receipt_no": "That receipt number already exists.",
+        "purchases.purchase_no": "That purchase number already exists.",
+        "employees.employee_code": "That employee code already exists.",
+      };
+      return bad(field[clash] ?? `A record with this ${clash.split(".").pop()?.replace(/_/g, " ")} already exists.`, 400);
+    }
+    return bad(message, 500);
   }
 }
