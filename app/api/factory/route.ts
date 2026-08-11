@@ -54,7 +54,7 @@ const attendanceStatuses = ["Present", "Absent", "Half Day", "Leave", "Overtime"
 const dispatchStatuses = ["Active", "In Transit", "Shipped", "Delivered"];
 
 // Only the owner may manage people, shops and company settings.
-const ownerOnlyActions = new Set(["save-user", "delete-user", "save-shop", "delete-shop", "save-settings", "ship-to-shop", "recalculate-period", "delete-lot", "delete-gatepass"]);
+const ownerOnlyActions = new Set(["save-user", "delete-user", "save-shop", "delete-shop", "save-settings", "ship-to-shop", "recalculate-period", "delete-lot", "delete-gatepass", "reset-system"]);
 // A shop login can only ever touch its own counter.
 const shopActions = new Set(["pos-sale", "delete-sale", "save-shop-expense", "delete-shop-expense", "save-shop-attendance", "shop-day-close", "save-shop-inventory", "receive-shop-shipment"]);
 
@@ -186,6 +186,7 @@ const addedColumns: Array<[string, string, string]> = [
   ["users", "shop_id", "INTEGER"],
   ["users", "permissions", "TEXT NOT NULL DEFAULT '[]'"],
   ["system_settings", "session_secret", "TEXT NOT NULL DEFAULT ''"],
+  ["system_settings", "seeded", "INTEGER NOT NULL DEFAULT 0"],
   ["warehouse_receipts", "gatepass_id", "INTEGER"],
   ["warehouse_receipts", "receivable_qty", "INTEGER NOT NULL DEFAULT 0"],
   ["warehouse_receipts", "non_receivable_qty", "INTEGER NOT NULL DEFAULT 0"],
@@ -216,10 +217,19 @@ async function migrateColumns() {
   }
 }
 
+// Sample data is offered once. After the owner clears the system this flag stays
+// set, so an empty table is never mistaken for a fresh install to re-seed.
+async function sampleDataSettled() {
+  const row = await getD1().prepare("SELECT seeded FROM system_settings WHERE id=1").first<{ seeded: number }>();
+  return Number(row?.seeded ?? 0) === 1;
+}
+const markSampleDataSettled = () => getD1().prepare("UPDATE system_settings SET seeded=1 WHERE id=1").run();
+
 // The team directory seeds on its own so databases created before Administration
 // existed still come up with a usable roster, attendance and payroll history.
 async function seedTeam() {
   const db = getD1();
+  if (await sampleDataSettled()) return;
   const count = await db.prepare("SELECT COUNT(*) AS count FROM employees").first<{ count: number }>();
   if ((count?.count ?? 0) > 0) return;
   await db.batch([
@@ -250,6 +260,7 @@ async function seedOwner() {
 // Purchases and shops seed independently so an existing database picks them up.
 async function seedTrade() {
   const db = getD1();
+  if (await sampleDataSettled()) return;
   const [supplierCount, shopCount] = await Promise.all([
     db.prepare("SELECT COUNT(*) AS count FROM suppliers").first<{ count: number }>(),
     db.prepare("SELECT COUNT(*) AS count FROM shops").first<{ count: number }>(),
@@ -285,6 +296,7 @@ async function seedTrade() {
 // worked example of the theka register.
 async function seedPieceWork() {
   const db = getD1();
+  if (await sampleDataSettled()) return;
   const [entries, staff] = await Promise.all([
     db.prepare("SELECT COUNT(*) AS count FROM piece_work_entries").first<{ count: number }>(),
     db.prepare("SELECT id FROM employees WHERE salary_type='Theka' ORDER BY employee_code").all<{ id: number }>(),
@@ -321,7 +333,8 @@ async function initializeDatabase() {
   const count = await db.prepare("SELECT COUNT(*) AS count FROM lots").first<{ count: number }>();
   // The eight workflow departments must own ids 1-8, so Gatepass is only appended
   // once they exist — on an already-seeded database that is immediately.
-  if ((count?.count ?? 0) > 0) {
+  if ((count?.count ?? 0) > 0 || await sampleDataSettled()) {
+    await db.prepare("INSERT OR IGNORE INTO departments (name,sequence) VALUES ('Issue Lot',1),('Embroidery',2),('Cutting',3),('Stitching',4),('Finishing',5),('Packing',6),('Warehouse',7),('Customer Dispatch',8)").run();
     await db.prepare("INSERT OR IGNORE INTO departments (id,name,sequence) VALUES (?,'Gatepass',7)").bind(GATEPASS_DEPARTMENT_ID).run();
     return;
   }
@@ -362,6 +375,7 @@ async function initializeDatabase() {
   ];
   await db.batch(detailSeed);
   await db.prepare("INSERT OR IGNORE INTO departments (id,name,sequence) VALUES (?,'Gatepass',7)").bind(GATEPASS_DEPARTMENT_ID).run();
+  await markSampleDataSettled();
   await db.prepare("PRAGMA optimize").run();
 }
 
@@ -1138,6 +1152,35 @@ export async function POST(request: Request) {
           `${String(row.product_name)} rate changed from Rs ${Number(row.sale_rate ?? 0).toLocaleString()} to Rs ${saleRate.toLocaleString()}.`, "Shops", timestamp),
       ]);
       return Response.json({ ok: true, message: `${String(row.product_name)} updated.`, state: await state() });
+    }
+
+    if (action === "reset-system") {
+      // Everything the business entered goes. What stays is the shell needed to
+      // sign in and start again: this owner login, the company profile and the
+      // fixed workflow departments.
+      if (String(body.confirm ?? "") !== "RESET") return bad("Type RESET to confirm clearing the whole system.");
+      const timestamp = now();
+      // Strictly children before parents: audit_logs and notifications reference
+      // lots, designs and users, so they have to go before those are touched.
+      const wipe = [
+        "shop_sale_items", "shop_sales", "shop_expenses", "shop_attendance", "shop_day_close",
+        "shop_inventory", "shop_shipments", "shops",
+        "piece_work_entries", "salary_advances", "salary_records", "attendance_records", "employees",
+        "purchases", "suppliers",
+        "audit_logs", "notifications",
+        "customer_dispatches", "warehouse_inventory", "warehouse_receipts", "gatepasses",
+        "department_transfers", "lot_remarks", "lot_history", "lot_size_breakdowns",
+        ...Object.values(tableByDepartment),
+        "lots", "designs", "customers",
+      ];
+      for (const table of wipe) await db.prepare(`DELETE FROM ${table}`).run();
+      await db.batch([
+        db.prepare("DELETE FROM users WHERE id<>?").bind(session.userId),
+        db.prepare("UPDATE users SET shop_id=NULL WHERE id=?").bind(session.userId),
+        db.prepare("UPDATE system_settings SET seeded=1 WHERE id=1"),
+        db.prepare("INSERT INTO audit_logs (user_id,department_id,action,new_value,remarks,created_at) VALUES (?,1,'System Reset','All records cleared','Owner cleared the system to start fresh',?)").bind(session.userId, timestamp),
+      ]);
+      return Response.json({ ok: true, message: "System cleared. Everything is ready for fresh data.", state: await state() });
     }
 
     if (action === "delete-gatepass") {

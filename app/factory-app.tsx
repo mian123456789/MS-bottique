@@ -1182,7 +1182,31 @@ function AdminPage({ state, page, post, saving, setModal, user }: PageProps & { 
   if (page === "Audit Logs") return <div className="page-stack"><SectionHead eyebrow="IMMUTABLE RECORD" title="Audit Logs" detail="Every quantity, transfer and record change is preserved and cannot be deleted." action={<div className="action-group"><button className="button secondary" onClick={() => exportRows(state.audits, "MS-Boutique-Audit-Logs")}><Download size={16} /> Excel</button><button className="button secondary" onClick={() => window.print()}><FileText size={16} /> PDF</button><button className="button secondary" onClick={() => window.print()}><Printer size={16} /> Print</button></div>} /><article className="panel table-panel"><div className="table-scroll"><table><thead><tr><th>Date & Time</th><th>User</th><th>Department</th><th>Lot / Design</th><th>Action</th><th>Previous</th><th>New</th><th>Quantity</th><th>Remarks</th></tr></thead><tbody>{state.audits.map((item) => <tr key={String(item.id)}><td>{formatDate(item.created_at, true)}</td><td><b>{String(item.user_name || "Ayesha Khan")}</b></td><td>{String(item.department || "System")}</td><td>{String(item.lot_no || "—")}<small className="cell-sub">{String(item.design_no || "—")}</small></td><td><StatusBadge status={item.action} /></td><td><span className="audit-value">{String(item.previous_value || "—").slice(0, 38)}</span></td><td><span className="audit-value new">{String(item.new_value || "—").slice(0, 38)}</span></td><td>{fmt(item.quantity)}</td><td>{String(item.remarks || "—")}</td></tr>)}</tbody></table></div></article></div>;
   if (page === "Notifications") return <NotificationsPage state={state} post={post} saving={saving} />;
   if (page === "Users & Permissions") return <UsersPage state={state} post={post} saving={saving} setModal={setModal} user={user} />;
-  return <SettingsPage settings={state.settings} onSave={post} saving={saving} />;
+  return <><SettingsPage settings={state.settings} onSave={post} saving={saving} />{user.role === "Owner" && <ResetSystem state={state} post={post} saving={saving} />}</>;
+}
+
+function ResetSystem({ state, post, saving }: { state: FactoryState; post: PageProps["post"]; saving: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const counts = [
+    { label: "Lots", value: state.lots.length }, { label: "Designs", value: state.designs.length },
+    { label: "Customers", value: state.customers.length }, { label: "Gate passes", value: state.gatepasses.length },
+    { label: "Employees", value: state.employees.length }, { label: "Purchases", value: state.purchases.length },
+    { label: "Shops", value: state.shops.length }, { label: "Shop sales", value: state.shopSales.length },
+    { label: "Other logins", value: Math.max(0, state.users.length - 1) },
+  ].filter((item) => item.value > 0);
+  const total = counts.reduce((sum, item) => sum + item.value, 0);
+  return <section className="panel danger-zone">
+    <div className="panel-head"><div><span className="eyebrow danger">DANGER ZONE</span><h3>Clear all data and start fresh</h3></div></div>
+    <div className="danger-body">
+      <p>Removes every lot, gate pass, employee, purchase, shop and sale so the system looks brand new. Your owner login, the company profile and the fixed workflow departments are kept so you can sign straight back in. <b>This cannot be undone.</b></p>
+      {counts.length > 0 ? <div className="delete-list">{counts.map((item) => <span key={item.label}><b>{item.value}</b>{item.label}</span>)}</div> : <p className="muted">The system is already empty.</p>}
+      {!open ? <button className="button danger" disabled={!total} onClick={() => setOpen(true)}><Trash2 size={16} /> Clear All Data</button> : <div className="danger-confirm">
+        <Field label="Type RESET to confirm"><input value={confirm} onChange={(event) => setConfirm(event.target.value.toUpperCase())} placeholder="RESET" /></Field>
+        <div className="action-group"><button className="button secondary" onClick={() => { setOpen(false); setConfirm(""); }}>Cancel</button><button className="button danger" disabled={saving || confirm !== "RESET"} onClick={() => void post({ action: "reset-system", confirm })}>{saving && <LoaderCircle className="spin" size={16} />} Clear {total} records permanently</button></div>
+      </div>}
+    </div>
+  </section>;
 }
 
 function NotificationsPage({ state, post, saving }: { state: FactoryState; post: PageProps["post"]; saving: boolean }) {
