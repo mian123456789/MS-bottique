@@ -1,4 +1,4 @@
-import { getD1 } from "@/db/runtime";
+import { getD1, ownerBootstrapPassword } from "@/db/runtime";
 
 const now = () => new Date().toISOString();
 
@@ -246,7 +246,7 @@ async function seedTeam() {
 async function seedOwner() {
   const db = getD1();
   const owner = await db.prepare("SELECT id, username, password_hash FROM users WHERE lower(role)='owner' OR id=1").first<Record<string, unknown>>();
-  const hashed = await hashPassword("Admin&8687");
+  const hashed = await hashPassword(ownerBootstrapPassword());
   if (!owner) {
     await db.prepare("INSERT INTO users (name,email,username,password_hash,role,role_id,department_id,permissions,active) VALUES ('Owner','owner@msboutique.com','Admin',?,'Owner',1,1,'[]',1)").bind(hashed).run();
     return;

@@ -22,6 +22,39 @@ click **Open POS** on a shop card; it opens in a new browser tab at
 
 Demo sign-in: `admin@msboutique.com` / `admin123`
 
+## Sign in
+
+The first run creates a single owner account, `Admin`. Its password comes from the
+`OWNER_PASSWORD` secret; if that is not set it falls back to a value written in
+`db/runtime.ts`, which is **public in this repository**.
+
+> **Before putting this on the internet:** set `OWNER_PASSWORD` (see below) on a
+> fresh database, or sign in and change the password immediately under
+> **Users & Permissions**. Anyone reading this repo can see the fallback.
+
+The owner creates every other login and decides what each one opens — a *Staff*
+account sees only the factory pages you tick, a *Shop* account opens one shop's
+point of sale and nothing else.
+
+## Deploying
+
+This is a **Cloudflare Workers** application. `db/runtime.ts` imports
+`cloudflare:workers` and the data lives in **Cloudflare D1**, so it needs the
+Workers runtime — it will not run on PHP shared hosting, and plain Node.js hosting
+would require replacing the whole D1 data layer first.
+
+```bash
+npx wrangler d1 create ms-boutique
+# put the returned database_id in wrangler.jsonc, then:
+npx wrangler secret put OWNER_PASSWORD
+npm run build
+npx wrangler deploy
+```
+
+To serve it from your own domain, add the hostname as a custom domain on the
+Worker, then point that hostname at Cloudflare with a CNAME in your registrar's
+DNS. The domain must be one you actually own.
+
 ## Prerequisites
 
 - Node.js `>=22.13.0` — install from <https://nodejs.org> if the launcher says it
