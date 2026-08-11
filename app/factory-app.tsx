@@ -8,7 +8,7 @@ import {
   Phone, Plus, Printer, ReceiptText, Route, Save, Scissors, Search, Send, Settings, ShieldCheck, Shirt,
   Receipt, ShoppingBag, Sparkles, Store, Trash2, TrendingUp, Truck, Upload, UserCog, UserPlus, Users, Wallet, Warehouse as WarehouseIcon, X,
 } from "lucide-react";
-import { apiFetch, hasUploadedLogo, initials, readLogoFile, SessionUser } from "./shared";
+import { apiFetch, escapeHtml, hasUploadedLogo, initials, printDocument, readLogoFile, SessionUser } from "./shared";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Row = Record<string, string | number | boolean | null>;
@@ -345,6 +345,8 @@ export default function FactoryApp({ user, onSignOut }: { user: SessionUser; onS
     {modal?.type === "shop" && <ShopModal record={modal.record} onClose={() => setModal(null)} onSave={post} saving={saving} />}
     {modal?.type === "ship-shop" && <ShipToShopModal state={state} onClose={() => setModal(null)} onSave={post} saving={saving} />}
     {modal?.type === "user" && <UserModal record={modal.record} state={state} onClose={() => setModal(null)} onSave={post} saving={saving} />}
+    {modal?.type === "delete-gatepass" && modal.gatepass && <DeleteGatepassModal gatepass={modal.gatepass} onClose={() => setModal(null)} onSave={post} saving={saving} />}
+    {modal?.type === "delete-lot" && modal.lot && <DeleteLotModal lot={modal.lot} state={state} onClose={() => setModal(null)} onSave={post} saving={saving} />}
   </div>;
 }
 
@@ -546,11 +548,11 @@ function ActivityList({ rows }: { rows: Row[] }) { return <div className="activi
 
 function SectionHead({ eyebrow, title, detail, action }: { eyebrow?: string; title: string; detail: string; action?: ReactNode }) { return <div className="section-head"><div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2><p>{detail}</p></div>{action}</div>; }
 
-function IssueLot({ state, setModal }: PageProps) {
+function IssueLot({ state, setModal, user }: PageProps) {
   const issueLots = state.lots.filter((lot) => lot.current_department === "Issue Lot" || state.transfers.some((transfer) => number(transfer.lot_id) === number(lot.id) && number(transfer.from_department_id) === 1));
   return <div className="page-stack"><SectionHead eyebrow="PRODUCTION START" title="Issue Lot" detail="Every factory order begins here with a controlled, traceable lot." action={<div className="action-group"><button className="button secondary" onClick={() => exportRows(issueLots, "MS-Boutique-Issue-Lots")}><Download size={16} /> Excel</button><button className="button secondary" onClick={() => window.print()}><FileText size={16} /> PDF</button><button className="button secondary" onClick={() => window.print()}><Printer size={16} /> Print</button><button className="button primary" onClick={() => setModal({ type: "new-lot" })}><Plus size={17} /> Issue New Lot</button></div>} />
     <div className="workflow-banner"><div className="workflow-label"><ClipboardPlus size={20} /><span><b>Strict factory workflow</b><small>Lots move only after an authorized transfer.</small></span></div><div className="mini-flow">{workflow.map((item, index) => <span key={item} className={index === 0 ? "active" : ""}>{index + 1}. {item}{index < workflow.length - 1 && <ChevronRight size={13} />}</span>)}</div></div>
-    <article className="panel table-panel"><div className="panel-head"><div><span className="eyebrow">ISSUED LOTS</span><h3>Lot register</h3></div><span className="record-count">{issueLots.length} records</span></div><div className="table-scroll"><table><thead><tr><th>Lot / Design</th><th>Fabrication</th><th>Customer</th><th>QTY</th><th>Issue Date</th><th>Priority</th><th>Status</th><th className="right">Action</th></tr></thead><tbody>{issueLots.map((lot) => <tr key={String(lot.id)}><td><button className="table-primary" onClick={() => setModal({ type: "detail", lot })}>{String(lot.lot_no)}<small>{String(lot.design_no)}</small></button></td><td>{String(lot.fabrication)}<small className="cell-sub">Sizes {String(lot.size_range)}</small></td><td>{String(lot.customer)}</td><td><b>{fmt(lot.quantity)}</b> PCS</td><td>{formatDate(lot.issue_date)}</td><td><span className={`priority ${String(lot.priority).toLowerCase()}`}>{String(lot.priority)}</span></td><td><StatusBadge status={lot.status} /></td><td className="right"><div className="row-actions"><button title="Edit lot" aria-label="Edit lot" onClick={() => setModal({ type: "edit-lot", lot })}><Pencil size={16} /></button>{lot.current_department === "Issue Lot" && <button className="table-action" onClick={() => setModal({ type: "transfer", lot, department: "Issue Lot" })}>To Embroidery <ArrowRight size={14} /></button>}</div></td></tr>)}</tbody></table></div></article>
+    <article className="panel table-panel"><div className="panel-head"><div><span className="eyebrow">ISSUED LOTS</span><h3>Lot register</h3></div><span className="record-count">{issueLots.length} records</span></div><div className="table-scroll"><table><thead><tr><th>Lot / Design</th><th>Fabrication</th><th>Customer</th><th>QTY</th><th>Issue Date</th><th>Priority</th><th>Status</th><th className="right">Action</th></tr></thead><tbody>{issueLots.map((lot) => <tr key={String(lot.id)}><td><button className="table-primary" onClick={() => setModal({ type: "detail", lot })}>{String(lot.lot_no)}<small>{String(lot.design_no)}</small></button></td><td>{String(lot.fabrication)}<small className="cell-sub">Sizes {String(lot.size_range)}</small></td><td>{String(lot.customer)}</td><td><b>{fmt(lot.quantity)}</b> PCS</td><td>{formatDate(lot.issue_date)}</td><td><span className={`priority ${String(lot.priority).toLowerCase()}`}>{String(lot.priority)}</span></td><td><StatusBadge status={lot.status} /></td><td className="right"><div className="row-actions"><button title="Edit lot" aria-label="Edit lot" onClick={() => setModal({ type: "edit-lot", lot })}><Pencil size={16} /></button>{user.role === "Owner" && <button title="Delete lot" aria-label="Delete lot" onClick={() => setModal({ type: "delete-lot", lot })}><Trash2 size={16} /></button>}{lot.current_department === "Issue Lot" && <button className="table-action" onClick={() => setModal({ type: "transfer", lot, department: "Issue Lot" })}>To Embroidery <ArrowRight size={14} /></button>}</div></td></tr>)}</tbody></table></div></article>
   </div>;
 }
 
@@ -582,11 +584,15 @@ function DepartmentPage({ state, department, setModal }: PageProps & { departmen
   </div>;
 }
 
-function GatepassPage({ state, setModal }: PageProps) {
+function GatepassPage({ state, setModal, user }: PageProps) {
   const [search, setSearch] = useState(""); const [status, setStatus] = useState("");
   const rows = state.gatepasses.filter((item) => (!search || `${item.gatepass_no} ${item.lot_no} ${item.design_no} ${item.vehicle_no}`.toLowerCase().includes(search.toLowerCase())) && (!status || item.status === status));
   const pending = state.gatepasses.filter((item) => item.status === "Pending"); const issued = state.gatepasses.filter((item) => item.status === "Issued"); const released = state.gatepasses.filter((item) => item.status === "Released");
   const lotFor = (item: Row) => state.lots.find((lot) => number(lot.id) === number(item.lot_id));
+  // The invoice format prices the movement from the shop rate already set for
+  // this lot; with no rate the value columns print blank for hand completion.
+  const rateFor = (lotId: unknown) => number(state.shopShipments.find((row) => number(row.lot_id) === number(lotId))?.sale_rate
+    ?? state.shopInventory.find((row) => number(row.lot_id) === number(lotId))?.sale_rate);
   return <div className="page-stack"><SectionHead eyebrow="PACKING TO WAREHOUSE" title="Gatepass" detail="Every lot leaving Packing needs an issued gate pass before it can be shipped to the Warehouse." action={<div className="action-group"><button className="button secondary" onClick={() => exportRows(state.gatepasses, "MS-Boutique-Gatepass-Register")}><Download size={16} /> Excel</button><button className="button secondary" onClick={() => window.print()}><FileText size={16} /> PDF</button><button className="button secondary" onClick={() => window.print()}><Printer size={16} /> Print</button></div>} />
     <section className="warehouse-strip"><article><ClipboardList /><span>Awaiting gate pass<b>{fmt(pending.reduce((sum, item) => sum + number(item.quantity), 0))} PCS</b></span></article><article><DoorOpen /><span>Issued, not released<b>{fmt(issued.reduce((sum, item) => sum + number(item.quantity), 0))} PCS</b></span></article><article><Truck /><span>Released to Warehouse<b>{fmt(released.reduce((sum, item) => sum + number(item.quantity), 0))} PCS</b></span></article><article><CheckCircle2 /><span>Total gate passes<b>{state.gatepasses.length}</b></span></article></section>
     <div className="stage-flow"><span className="done">{departmentIcon("Packing")}<b>Packing</b><small>Cartons closed</small></span><ArrowRight size={16} /><span className="current"><DoorOpen size={15} /><b>Gatepass</b><small>Issue &amp; release</small></span><ArrowRight size={16} /><span className="pending">{departmentIcon("Warehouse")}<b>Warehouse</b><small>Receive &amp; count</small></span></div>
@@ -594,7 +600,17 @@ function GatepassPage({ state, setModal }: PageProps) {
     <article className="panel table-panel gatepass-table"><div className="panel-head"><div><span className="eyebrow">GATE PASS REGISTER</span><h3>Warehouse shipment gate passes</h3></div><span className="record-count">{pending.length} pending · {issued.length} issued · {released.length} released</span></div>
       <div className="table-scroll"><table><thead><tr><th>Gate Pass No.</th><th>Lot / Design</th><th>Customer</th><th>QTY</th><th>Cartons</th><th>Route</th><th>Vehicle / Driver</th><th>Issued / Approved</th><th>Gate Pass Date</th><th>Security</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>{rows.map((item) => { const lot = lotFor(item); return <tr key={String(item.id)}><td><button className="table-primary" onClick={() => lot && setModal({ type: "detail", lot })}>{String(item.gatepass_no)}<small>{String(item.purpose)}</small></button></td><td>{String(item.lot_no)}<small className="cell-sub">{String(item.design_no)} · {String(item.size_range)}</small></td><td>{String(item.customer)}</td><td><b>{fmt(item.quantity)}</b> PCS</td><td>{fmt(item.cartons)}</td><td><span className="route-cell">{String(item.from_department)} <ArrowRight size={11} /> {String(item.to_department)}</span></td><td>{String(item.vehicle_no || "—")}<small className="cell-sub">{String(item.driver_name || "Driver not assigned")}</small></td><td>{String(item.issued_by || "—")}<small className="cell-sub">{String(item.approved_by || "Awaiting approval")}</small></td><td>{formatDate(item.gatepass_date)}<small className="cell-sub">{item.release_date ? `Released ${formatDate(item.release_date)}` : "Not released"}</small></td><td><StatusBadge status={item.security_check} /></td><td><StatusBadge status={item.status} /></td>
-          <td><div className="row-actions">{String(item.status) !== "Pending" && <button title="Print gate pass" aria-label="Print gate pass" onClick={() => printMovementGatepass(item, state.settings)}><Printer size={15} /></button>}{String(item.status) === "Pending" && <button className="table-action" onClick={() => lot && setModal({ type: "gatepass", lot, gatepass: item })}>Issue Gate Pass <DoorOpen size={14} /></button>}{String(item.status) === "Issued" && <button className="table-action" onClick={() => lot && setModal({ type: "gatepass-release", lot, gatepass: item })}>Release to Warehouse <Truck size={14} /></button>}{String(item.status) === "Released" && <button className="button ghost small" onClick={() => lot && setModal({ type: "detail", lot })}><Eye size={14} /> Full status</button>}</div></td></tr>; })}</tbody></table></div>
+          <td><div className="row-actions">
+            {String(item.status) !== "Pending" && <select className="print-select" aria-label={`Print ${String(item.gatepass_no)}`} value="" onChange={(event) => { const choice = event.target.value; event.target.value = ""; if (choice === "gatepass") printMovementGatepass(item, state.settings); if (choice === "invoice") printInvoiceGatepass(item, state.settings, rateFor(item.lot_id)); }}>
+              <option value="">Print…</option>
+              <option value="gatepass">Gate Pass</option>
+              <option value="invoice">Invoice Gate Pass</option>
+            </select>}
+            {String(item.status) === "Pending" && <button className="table-action" onClick={() => lot && setModal({ type: "gatepass", lot, gatepass: item })}>Issue Gate Pass <DoorOpen size={14} /></button>}
+            {String(item.status) === "Issued" && <button className="table-action" onClick={() => lot && setModal({ type: "gatepass-release", lot, gatepass: item })}>Release to Warehouse <Truck size={14} /></button>}
+            {String(item.status) === "Released" && <button className="button ghost small" onClick={() => lot && setModal({ type: "detail", lot })}><Eye size={14} /> Full status</button>}
+            {user.role === "Owner" && <button title="Delete gate pass" aria-label="Delete gate pass" onClick={() => setModal({ type: "delete-gatepass", gatepass: item })}><Trash2 size={15} /></button>}
+          </div></td></tr>; })}</tbody></table></div>
       {!rows.length && <Empty title="No gate passes yet" detail="Transfer a packed lot from the Packing department and its gate pass will be raised here automatically." />}
     </article>
   </div>;
@@ -1307,6 +1323,30 @@ function CustomerModal({ customer, onClose, onSave, saving }: { customer?: Row; 
   return <Modal title={customer ? "Edit Customer" : "Add New Customer"} subtitle="Customer master data is available throughout production and dispatch." onClose={onClose}><form onSubmit={submit}><div className="form-grid"><Field label="Customer Name *" span><input value={form.name} onChange={(e) => { setForm({ ...form, name: e.target.value }); setError(""); }} /></Field><Field label="Phone Number *"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} /></Field><Field label="Address / Destination *"><input value={form.destination} onChange={(e) => setForm({ ...form, destination: e.target.value })} /></Field></div>{error && <div className="form-alert"><AlertTriangle size={16} />{error}</div>}<div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>{saving && <LoaderCircle className="spin" size={16} />} {customer ? "Save Customer" : "Add Customer"}</button></div></form></Modal>;
 }
 
+function DeleteGatepassModal({ gatepass, onClose, onSave, saving }: { gatepass: Row; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) {
+  return <Modal title={`Delete ${String(gatepass.gatepass_no)}`} subtitle={`${String(gatepass.design_no)} / ${String(gatepass.lot_no)} · ${fmt(gatepass.quantity)} PCS`} onClose={onClose}>
+    <div className="delete-warning"><AlertTriangle /><div><h3>Remove this gate pass?</h3><p>The gate pass and its expected Warehouse receipt are deleted, and the lot goes back to Packing so it can be sent again. A gate pass already received into stock cannot be removed.</p></div></div>
+    <div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button danger" disabled={saving} onClick={() => void onSave({ action: "delete-gatepass", gatepassId: gatepass.id })}>{saving && <LoaderCircle className="spin" size={16} />} Delete Gate Pass</button></div>
+  </Modal>;
+}
+
+function DeleteLotModal({ lot, state, onClose, onSave, saving }: { lot: Row; state: FactoryState; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) {
+  const linked = [
+    { label: "Department records", count: departmentPages.filter((department) => (state.records[department] || []).some((row) => number(row.lot_id) === number(lot.id))).length },
+    { label: "Transfers", count: state.transfers.filter((row) => number(row.lot_id) === number(lot.id)).length },
+    { label: "Gate passes", count: state.gatepasses.filter((row) => number(row.lot_id) === number(lot.id)).length },
+    { label: "Warehouse receipts", count: state.receipts.filter((row) => number(row.lot_id) === number(lot.id)).length },
+    { label: "Customer dispatches", count: state.dispatches.filter((row) => number(row.lot_id) === number(lot.id)).length },
+    { label: "Shop shipments", count: state.shopShipments.filter((row) => number(row.lot_id) === number(lot.id)).length },
+    { label: "History & remarks", count: state.history.filter((row) => number(row.lot_id) === number(lot.id)).length + state.remarks.filter((row) => number(row.lot_id) === number(lot.id)).length },
+  ].filter((item) => item.count > 0);
+  return <Modal title={`Delete ${String(lot.lot_no)}`} subtitle={`${String(lot.design_no)} · ${fmt(lot.quantity)} PCS · ${String(lot.customer)}`} onClose={onClose}>
+    <div className="delete-warning"><AlertTriangle /><div><h3>Delete this lot and everything attached to it?</h3><p>This cannot be undone. The audit log keeps a record that the lot was deleted, but the lot itself and the records below are removed permanently.</p></div></div>
+    {linked.length > 0 && <div className="delete-list">{linked.map((item) => <span key={item.label}><b>{item.count}</b>{item.label}</span>)}</div>}
+    <div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button danger" disabled={saving} onClick={() => void onSave({ action: "delete-lot", lotId: lot.id })}>{saving && <LoaderCircle className="spin" size={16} />} Delete Lot</button></div>
+  </Modal>;
+}
+
 function DeleteCustomerModal({ customer, onClose, onSave, saving }: { customer: Row; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) {
   return <Modal title="Delete Customer" subtitle={String(customer.name)} onClose={onClose}><div className="delete-warning"><AlertTriangle /><div><h3>Delete this customer record?</h3><p>This action is blocked automatically if the customer has linked production lots.</p></div></div><div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button danger" disabled={saving} onClick={() => void onSave({ action: "delete-customer", customerId: customer.id })}>{saving && <LoaderCircle className="spin" size={16} />} Delete Customer</button></div></Modal>;
 }
@@ -1800,6 +1840,67 @@ function printMonthlySalary(payroll: ReturnType<typeof buildPayroll>, settings: 
     </tbody></table></div>`;
 
   openSalaryDocument(`Monthly Salary — ${payroll.period}`, settings, body);
+}
+
+// Invoice-styled gate pass: the same movement laid out as a commercial document
+// with rate and value columns, for gate security and transport paperwork.
+function printInvoiceGatepass(gatepass: Row, settings: Row, rate: number) {
+  const quantity = number(gatepass.quantity);
+  const amount = round2(quantity * rate);
+  const valueCell = (value: string) => rate > 0 ? value : `<span class="blank"></span>`;
+  printDocument(`Invoice Gate Pass ${String(gatepass.gatepass_no)}`,
+    `@page{size:A4;margin:13mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#172333;margin:0;font-size:12px}
+     .sheet{border:1px solid #cad2da;padding:26px}
+     header{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #2f9e44;padding-bottom:16px}
+     header img,.mark{width:60px;height:60px;object-fit:contain;border-radius:10px}
+     .brand{display:flex;gap:14px;align-items:center}
+     .mark{display:grid;place-items:center;background:#2f9e44;color:#fff;font-size:21px;font-weight:800}
+     h1{font-size:21px;margin:0 0 5px}header p,header small{margin:0;color:#647184;display:block}
+     .type{text-align:right}.type span{display:block;color:#2f9e44;font-weight:800;letter-spacing:1.4px;font-size:10px}
+     .type b{display:block;font-size:18px;margin:6px 0}
+     .meta{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid #dbe1e6;margin:20px 0}
+     .meta div{padding:11px;border-right:1px solid #dbe1e6}.meta div:last-child{border:0}
+     .meta small{display:block;color:#798594;font-size:9px;font-weight:700;letter-spacing:.6px}.meta b{display:block;margin-top:5px}
+     .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
+     .party{border:1px solid #dbe1e6;padding:13px}.party small{display:block;color:#798594;font-size:9px;font-weight:700}
+     .party h2{font-size:14px;margin:6px 0 3px}.party p{margin:2px 0;color:#536174;font-size:11px}
+     table{width:100%;border-collapse:collapse;margin-bottom:16px}
+     th{background:#14622c;color:#fff;text-align:left;padding:9px;font-size:10px}
+     td{border:1px solid #dbe1e6;padding:11px}
+     td.n,th.n{text-align:right}
+     .blank{display:inline-block;min-width:78px;border-bottom:1px dotted #8b97a5}
+     tr.total td{background:#e9f6ec;font-weight:800;color:#14622c;font-size:13px}
+     .remarks{background:#f2f7f3;padding:12px;margin-bottom:22px}
+     .remarks small{display:block;color:#798594;font-size:9px;font-weight:700}.remarks p{margin:6px 0 0}
+     .signatures{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:48px}
+     .signatures div{border-top:1px solid #697687;padding-top:8px;text-align:center;font-size:10px}
+     .footer{text-align:center;border-top:1px solid #dbe1e6;margin-top:26px;padding-top:12px;color:#6f7a89;font-size:10px}`,
+    `<main class="sheet">
+      <header><div class="brand">${settings.logo_url ? `<img src="${escapeHtml(settings.logo_url)}" alt="">` : `<div class="mark">MS</div>`}
+        <div><h1>${escapeHtml(settings.company_name || "MS Boutique")}</h1><p>${escapeHtml(settings.address || "")}</p><small>${escapeHtml(settings.phone || "")}</small></div></div>
+        <div class="type"><span>INVOICE GATE PASS</span><b>${escapeHtml(gatepass.gatepass_no)}</b><small>${escapeHtml(formatDate(gatepass.gatepass_date))}</small></div></header>
+      <section class="meta">
+        <div><small>PURPOSE</small><b>${escapeHtml(gatepass.purpose)}</b></div>
+        <div><small>VEHICLE NO.</small><b>${escapeHtml(gatepass.vehicle_no || "—")}</b></div>
+        <div><small>DRIVER</small><b>${escapeHtml(gatepass.driver_name || "—")}</b></div>
+        <div><small>STATUS</small><b>${escapeHtml(gatepass.status)}</b></div>
+      </section>
+      <section class="parties">
+        <div class="party"><small>DESPATCHED FROM</small><h2>${escapeHtml(gatepass.from_department)}</h2><p>${escapeHtml(settings.company_name || "MS Boutique")}</p><p>${escapeHtml(settings.address || "")}</p></div>
+        <div class="party"><small>DELIVER TO</small><h2>${escapeHtml(gatepass.to_department)}</h2><p>Customer: ${escapeHtml(gatepass.customer || "—")}</p><p>Lot ${escapeHtml(gatepass.lot_no)}</p></div>
+      </section>
+      <table><thead><tr><th>#</th><th>Design / Description</th><th>Fabrication</th><th>Size Range</th><th class="n">Quantity</th><th class="n">Cartons</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead>
+        <tbody><tr>
+          <td>1</td><td><b>${escapeHtml(gatepass.design_no)}</b><br>${escapeHtml(gatepass.lot_no)}</td>
+          <td>${escapeHtml(gatepass.fabrication)}</td><td>${escapeHtml(gatepass.size_range)}</td>
+          <td class="n">${fmt(quantity)} PCS</td><td class="n">${fmt(gatepass.cartons)}</td>
+          <td class="n">${valueCell(money(rate))}</td><td class="n">${valueCell(money(amount))}</td>
+        </tr>
+        <tr class="total"><td colspan="4">Total declared value</td><td class="n">${fmt(quantity)} PCS</td><td class="n">${fmt(gatepass.cartons)}</td><td class="n"></td><td class="n">${valueCell(money(amount))}</td></tr></tbody></table>
+      <section class="remarks"><small>REMARKS</small><p>${escapeHtml(gatepass.remarks || "Cartons sealed and released for warehouse shipment.")}</p></section>
+      <section class="signatures"><div>Issued By<br>${escapeHtml(gatepass.issued_by || "")}</div><div>Approved By<br>${escapeHtml(gatepass.approved_by || "")}</div><div>Driver Signature</div><div>Gate Security</div></section>
+      <footer class="footer">${escapeHtml(settings.company_name || "MS Boutique")} · Invoice Gate Pass ${escapeHtml(gatepass.gatepass_no)}${rate > 0 ? "" : " · declared value to be completed by hand"}</footer>
+    </main>`);
 }
 
 // Internal Packing-to-Warehouse gate pass — a different document to the customer gatepass.

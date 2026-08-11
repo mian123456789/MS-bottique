@@ -349,6 +349,11 @@ tbody tr:last-child td { border-bottom: 0; } tbody tr:hover { background: #fbfcf
 .status-chip.tone-in-transit { background: var(--blue-soft); color: var(--blue); }
 .status-chip.tone-shipped { background: var(--orange-soft); color: var(--orange); }
 .status-chip.tone-delivered { background: #f1edfc; color: var(--purple); }
+.delete-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.delete-list span { display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); color: #5b6a60; font-size: 9px; font-weight: 700; }
+.delete-list b { color: var(--red); font-size: 12px; }
+.print-select { height: 29px; border: 1px solid var(--line); border-radius: 6px; background: white; color: #48566a; font-size: 9px; font-weight: 750; padding: 0 6px; outline: 0; cursor: pointer; }
+.print-select:hover { border-color: var(--green); color: var(--green-deep); }
 .status-select { height: 30px; border: 1px solid var(--line); border-radius: 6px; background: white; color: #48566a; font-size: 9px; font-weight: 750; padding: 0 6px; outline: 0; cursor: pointer; }
 .status-select:hover { border-color: #a9b5c2; }
 .inline-filters { display: flex; align-items: center; gap: 8px; }

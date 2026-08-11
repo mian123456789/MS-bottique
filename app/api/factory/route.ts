@@ -54,7 +54,7 @@ const attendanceStatuses = ["Present", "Absent", "Half Day", "Leave", "Overtime"
 const dispatchStatuses = ["Active", "In Transit", "Shipped", "Delivered"];
 
 // Only the owner may manage people, shops and company settings.
-const ownerOnlyActions = new Set(["save-user", "delete-user", "save-shop", "delete-shop", "save-settings", "ship-to-shop", "recalculate-period"]);
+const ownerOnlyActions = new Set(["save-user", "delete-user", "save-shop", "delete-shop", "save-settings", "ship-to-shop", "recalculate-period", "delete-lot", "delete-gatepass"]);
 // A shop login can only ever touch its own counter.
 const shopActions = new Set(["pos-sale", "delete-sale", "save-shop-expense", "delete-shop-expense", "save-shop-attendance", "shop-day-close", "save-shop-inventory", "receive-shop-shipment"]);
 
@@ -1133,6 +1133,55 @@ export async function POST(request: Request) {
           `${String(row.product_name)} rate changed from Rs ${Number(row.sale_rate ?? 0).toLocaleString()} to Rs ${saleRate.toLocaleString()}.`, "Shops", timestamp),
       ]);
       return Response.json({ ok: true, message: `${String(row.product_name)} updated.`, state: await state() });
+    }
+
+    if (action === "delete-gatepass") {
+      const gatepassId = Number(body.gatepassId ?? 0);
+      const gatepass = await db.prepare("SELECT * FROM gatepasses WHERE id=?").bind(gatepassId).first<Record<string, unknown>>();
+      if (!gatepass) return bad("Gate pass not found.", 404);
+      // A released gate pass created a warehouse receipt; removing it would leave stock unexplained.
+      const receipt = await db.prepare("SELECT id, status FROM warehouse_receipts WHERE gatepass_id=?").bind(gatepassId).first<{ id: number; status: string }>();
+      if (receipt && String(receipt.status) !== "Expected") return bad("This gate pass has already been received into Warehouse stock and cannot be removed.");
+      const timestamp = now();
+      const statements = [] as ReturnType<typeof db.prepare>[];
+      if (receipt) statements.push(db.prepare("DELETE FROM warehouse_receipts WHERE id=?").bind(receipt.id));
+      statements.push(
+        db.prepare("DELETE FROM gatepasses WHERE id=?").bind(gatepassId),
+        db.prepare("UPDATE lots SET current_department='Packing',status='Completed',updated_at=? WHERE id=? AND current_department IN ('Gatepass','Warehouse')").bind(timestamp, gatepass.lot_id),
+        db.prepare("INSERT INTO audit_logs (user_id,department_id,lot_id,action,previous_value,quantity,remarks,created_at) VALUES (1,?,?,'Gate Pass Deleted',?,?,'Removed by owner',?)").bind(GATEPASS_DEPARTMENT_ID, gatepass.lot_id, String(gatepass.gatepass_no), Number(gatepass.quantity ?? 0), timestamp),
+        notify("Owner", "Gatepass", "warning", `${String(gatepass.gatepass_no)} deleted`, `${Number(gatepass.quantity ?? 0).toLocaleString()} PCS gate pass removed; the lot returns to Packing.`, "Gatepass", timestamp),
+      );
+      await db.batch(statements);
+      return Response.json({ ok: true, message: `${String(gatepass.gatepass_no)} deleted.`, state: await state() });
+    }
+
+    if (action === "delete-lot") {
+      const targetId = Number(body.lotId ?? 0);
+      const target = await db.prepare("SELECT l.*, d.design_no FROM lots l JOIN designs d ON d.id=l.design_id WHERE l.id=?").bind(targetId).first<Record<string, unknown>>();
+      if (!target) return bad("Lot not found.", 404);
+      // Anything already sold to a customer at a shop must keep its history intact.
+      const sold = await db.prepare("SELECT COUNT(*) AS count FROM shop_sale_items si JOIN shop_inventory inv ON inv.id=si.inventory_id WHERE inv.lot_id=?").bind(targetId).first<{ count: number }>();
+      if (Number(sold?.count ?? 0) > 0) return bad("This lot has been sold at a shop and cannot be deleted without losing sales history.");
+      const timestamp = now();
+      await db.batch([
+        ...Object.values(tableByDepartment).map((table) => db.prepare(`DELETE FROM ${table} WHERE lot_id=?`).bind(targetId)),
+        db.prepare("DELETE FROM shop_inventory WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM shop_shipments WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM customer_dispatches WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM warehouse_inventory WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM warehouse_receipts WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM gatepasses WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM department_transfers WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM lot_remarks WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM lot_history WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM lot_size_breakdowns WHERE lot_id=?").bind(targetId),
+        // The audit trail survives the record it described.
+        db.prepare("UPDATE audit_logs SET lot_id=NULL WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM lots WHERE id=?").bind(targetId),
+        db.prepare("INSERT INTO audit_logs (user_id,department_id,action,previous_value,quantity,remarks,created_at) VALUES (1,1,'Lot Deleted',?,?,'Lot and all linked records removed by owner',?)").bind(`${String(target.lot_no)} · ${String(target.design_no)}`, Number(target.quantity ?? 0), timestamp),
+        notify("Owner", "Production", "warning", `${String(target.lot_no)} deleted`, `${String(target.design_no)} · ${Number(target.quantity ?? 0).toLocaleString()} PCS removed with its transfers, gate passes, receipts and stock.`, "Lot Progress", timestamp),
+      ]);
+      return Response.json({ ok: true, message: `${String(target.lot_no)} and its linked records deleted.`, state: await state() });
     }
 
     if (action === "save-purchase" || action === "delete-purchase") {
