@@ -1,16 +1,21 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Inter carries the dense 8-11px table text; Plus Jakarta Sans gives the
+// headings and figures their character.
+const interSans = Inter({
+  variable: "--font-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jakartaDisplay = Plus_Jakarta_Sans({
+  variable: "--font-display",
   subsets: ["latin"],
+  weight: ["500", "600", "700", "800"],
+  display: "swap",
 });
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -43,7 +48,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${interSans.variable} ${jakartaDisplay.variable} antialiased`}
       >
         {children}
       </body>
