@@ -28,8 +28,8 @@
   --purple: #7753c7;
   --shadow: 0 8px 30px rgba(16, 40, 26, .07);
 
-  --font-body: var(--font-sans), "Segoe UI", system-ui, sans-serif;
-  --font-head: var(--font-display), var(--font-sans), "Segoe UI", system-ui, sans-serif;
+  --font-body: Inter, "Segoe UI", system-ui, sans-serif;
+  --font-head: "Plus Jakarta Sans", Inter, "Segoe UI", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }

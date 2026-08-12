@@ -1,5 +1,8 @@
 import { getD1, ownerBootstrapPassword } from "@/db/runtime";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 const now = () => new Date().toISOString();
 
 // Every alert is addressed to the owner/admin inbox so one screen shows what

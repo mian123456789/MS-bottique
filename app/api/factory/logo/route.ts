@@ -1,5 +1,8 @@
 import { getD1 } from "@/db/runtime";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 // Uploaded logos are stored as data URIs. Serving them from their own cacheable
 // endpoint keeps ~40 KB of base64 out of every state payload and every poll.
 export async function GET(request: Request) {
