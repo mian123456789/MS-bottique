@@ -129,7 +129,7 @@ const createStatements = [
   `CREATE TABLE IF NOT EXISTS system_settings (id INTEGER PRIMARY KEY, company_name TEXT NOT NULL DEFAULT 'MS Boutique', address TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', website TEXT NOT NULL DEFAULT '', logo_url TEXT NOT NULL DEFAULT '', invoice_prefix TEXT NOT NULL DEFAULT 'INV', challan_prefix TEXT NOT NULL DEFAULT 'DC', footer_note TEXT NOT NULL DEFAULT 'Thank you for choosing MS Boutique.', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS designs (id INTEGER PRIMARY KEY AUTOINCREMENT, design_no TEXT NOT NULL UNIQUE, fabrication TEXT NOT NULL, size_range TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS lots (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_no TEXT NOT NULL UNIQUE, design_id INTEGER NOT NULL REFERENCES designs(id), customer_id INTEGER NOT NULL REFERENCES customers(id), fabrication TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity > 0), size_range TEXT NOT NULL, order_date TEXT NOT NULL, required_delivery_date TEXT NOT NULL, priority TEXT NOT NULL DEFAULT 'Normal', current_department TEXT NOT NULL DEFAULT 'Issue Lot', status TEXT NOT NULL DEFAULT 'Lot Issued', completed_qty INTEGER NOT NULL DEFAULT 0, remarks TEXT NOT NULL DEFAULT '', issue_date TEXT NOT NULL, user_id INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-  `CREATE TABLE IF NOT EXISTS lot_size_breakdowns (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id INTEGER NOT NULL REFERENCES lots(id), size TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS lot_size_breakdowns (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id INTEGER NOT NULL REFERENCES lots(id), colour TEXT NOT NULL DEFAULT 'General', size TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS embroidery_records (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id INTEGER NOT NULL UNIQUE REFERENCES lots(id), design_id INTEGER NOT NULL REFERENCES designs(id), department_id INTEGER NOT NULL REFERENCES departments(id), user_id INTEGER REFERENCES users(id), received_qty INTEGER NOT NULL DEFAULT 0, completed_qty INTEGER NOT NULL DEFAULT 0, rejected_qty INTEGER NOT NULL DEFAULT 0, rework_qty INTEGER NOT NULL DEFAULT 0, transferred_qty INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'Waiting', remarks TEXT NOT NULL DEFAULT '', start_date TEXT, completion_date TEXT, embroidery_type TEXT NOT NULL DEFAULT 'Multi-head', pattern_no TEXT NOT NULL DEFAULT '', machine_no TEXT NOT NULL DEFAULT '', operator TEXT NOT NULL DEFAULT '', supervisor TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS cutting_records (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id INTEGER NOT NULL UNIQUE REFERENCES lots(id), design_id INTEGER NOT NULL REFERENCES designs(id), department_id INTEGER NOT NULL REFERENCES departments(id), user_id INTEGER REFERENCES users(id), received_qty INTEGER NOT NULL DEFAULT 0, completed_qty INTEGER NOT NULL DEFAULT 0, rejected_qty INTEGER NOT NULL DEFAULT 0, rework_qty INTEGER NOT NULL DEFAULT 0, transferred_qty INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'Waiting', remarks TEXT NOT NULL DEFAULT '', start_date TEXT, completion_date TEXT, target_qty INTEGER NOT NULL DEFAULT 0, cutting_qty INTEGER NOT NULL DEFAULT 0, passed_qty INTEGER NOT NULL DEFAULT 0, layer_no TEXT NOT NULL DEFAULT '', marker_no TEXT NOT NULL DEFAULT '', cutting_table TEXT NOT NULL DEFAULT '', operator TEXT NOT NULL DEFAULT '', supervisor TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS stitching_records (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id INTEGER NOT NULL UNIQUE REFERENCES lots(id), design_id INTEGER NOT NULL REFERENCES designs(id), department_id INTEGER NOT NULL REFERENCES departments(id), user_id INTEGER REFERENCES users(id), received_qty INTEGER NOT NULL DEFAULT 0, completed_qty INTEGER NOT NULL DEFAULT 0, rejected_qty INTEGER NOT NULL DEFAULT 0, rework_qty INTEGER NOT NULL DEFAULT 0, transferred_qty INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'Waiting', remarks TEXT NOT NULL DEFAULT '', start_date TEXT, completion_date TEXT, production_line TEXT NOT NULL DEFAULT '', supervisor TEXT NOT NULL DEFAULT '', target_qty INTEGER NOT NULL DEFAULT 0, today_production INTEGER NOT NULL DEFAULT 0, efficiency REAL NOT NULL DEFAULT 0, expected_completion_date TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
@@ -201,6 +201,7 @@ const addedColumns: Array<[string, string, string]> = [
   ["notifications", "category", "TEXT NOT NULL DEFAULT 'Production'"],
   ["notifications", "level", "TEXT NOT NULL DEFAULT 'info'"],
   ["notifications", "link", "TEXT NOT NULL DEFAULT ''"],
+  ["lot_size_breakdowns", "colour", "TEXT NOT NULL DEFAULT 'General'"],
 ];
 
 async function migrateColumns() {
@@ -1421,13 +1422,16 @@ export async function POST(request: Request) {
       const sizeRange = String(body.sizeRange ?? "").trim();
       const customerName = String(body.customer ?? "").trim();
       const quantity = Number(body.quantity ?? 0);
-      const sizes = Array.isArray(body.sizes) ? body.sizes as Array<{ size: string; quantity: number }> : [];
+      const sizes = (Array.isArray(body.sizes) ? body.sizes as Array<{ colour?: string; size?: string; quantity: number }> : [])
+        .map((item) => ({ colour: String(item.colour || "General").trim() || "General", size: String(item.size || "All").trim().toUpperCase() || "ALL", quantity: Number(item.quantity ?? 0) }))
+        .filter((item) => item.quantity !== 0);
       if (!designNo) return bad("Design No. is required.");
       if (!fabrication) return bad("Fabrication is required.");
       if (!sizeRange) return bad("Size Range is required.");
       if (!customerName) return bad("Customer is required.");
       if (!Number.isInteger(quantity) || quantity <= 0) return bad("QTY must be greater than zero.");
-      if (sizes.length && sizes.reduce((sum, item) => sum + Number(item.quantity || 0), 0) !== quantity) return bad("Total size quantity must equal lot quantity.");
+      if (sizes.some((item) => !Number.isInteger(item.quantity) || item.quantity < 0)) return bad("Colour / size quantities must be whole numbers and cannot be negative.");
+      if (sizes.length && sizes.reduce((sum, item) => sum + item.quantity, 0) !== quantity) return bad("Total colour / size quantity must equal lot quantity.");
       let customer = await db.prepare("SELECT id FROM customers WHERE lower(name)=lower(?)").bind(customerName).first<{ id: number }>();
       if (!customer) {
         const result = await db.prepare("INSERT INTO customers (name) VALUES (?) RETURNING id").bind(customerName).first<{ id: number }>();
@@ -1445,7 +1449,7 @@ export async function POST(request: Request) {
       const lot = await db.prepare(`INSERT INTO lots (lot_no,design_id,customer_id,fabrication,quantity,size_range,order_date,required_delivery_date,priority,current_department,status,completed_qty,remarks,issue_date,user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,'Issue Lot','Lot Issued',?,?,?,1,?,?) RETURNING id`)
         .bind(lotNo, design.id, customer.id, fabrication, quantity, sizeRange, String(body.orderDate ?? timestamp.slice(0,10)), String(body.deliveryDate ?? timestamp.slice(0,10)), String(body.priority ?? "Normal"), quantity, String(body.remarks ?? "Production approved."), timestamp.slice(0,10), timestamp, timestamp).first<{ id: number }>();
       if (!lot) return bad("Lot could not be created.", 500);
-      const entries = sizes.filter((item) => item.size && Number(item.quantity) >= 0).map((item) => db.prepare("INSERT INTO lot_size_breakdowns (lot_id,size,quantity) VALUES (?,?,?)").bind(lot.id, item.size, Number(item.quantity)));
+      const entries = sizes.map((item) => db.prepare("INSERT INTO lot_size_breakdowns (lot_id,colour,size,quantity) VALUES (?,?,?,?)").bind(lot.id, item.colour, item.size, item.quantity));
       entries.push(
         db.prepare("INSERT INTO lot_history (lot_id,user_id,department_id,action,quantity,remarks,created_at) VALUES (?,1,1,?,?,?,?)").bind(lot.id, `${lotNo} created`, quantity, String(body.remarks ?? "Production approved."), timestamp),
         db.prepare("INSERT INTO lot_remarks (lot_id,user_id,department_id,remark,created_at) VALUES (?,1,1,?,?)").bind(lot.id, String(body.remarks ?? "Production approved."), timestamp),
@@ -1478,16 +1482,27 @@ export async function POST(request: Request) {
       const fabrication = String(body.fabrication ?? "").trim();
       const sizeRange = String(body.sizeRange ?? "").trim();
       const quantity = Number(body.quantity ?? 0);
+      const hasBreakdown = Array.isArray(body.sizes);
+      const sizes = (Array.isArray(body.sizes) ? body.sizes as Array<{ colour?: string; size?: string; quantity: number }> : [])
+        .map((item) => ({ colour: String(item.colour || "General").trim() || "General", size: String(item.size || "All").trim().toUpperCase() || "ALL", quantity: Number(item.quantity ?? 0) }))
+        .filter((item) => item.quantity !== 0);
       if (!fabrication) return bad("Fabrication is required.");
       if (!sizeRange) return bad("Size Range is required.");
       if (!Number.isInteger(quantity) || quantity <= 0) return bad("QTY must be greater than zero.");
+      if (sizes.some((item) => !Number.isInteger(item.quantity) || item.quantity < 0)) return bad("Colour / size quantities must be whole numbers and cannot be negative.");
+      if (sizes.length && sizes.reduce((sum, item) => sum + item.quantity, 0) !== quantity) return bad("Total colour / size quantity must equal lot quantity.");
       if (quantity < Number(lot.completed_qty ?? 0)) return bad("QTY cannot be less than quantity already completed.");
       if (String(body.deliveryDate ?? "") < String(body.orderDate ?? "")) return bad("Required Delivery Date cannot be before Order Date.");
       const timestamp = now();
-      await db.batch([
+      const statements = [
         db.prepare("UPDATE lots SET fabrication=?,quantity=?,size_range=?,order_date=?,required_delivery_date=?,priority=?,remarks=?,updated_at=? WHERE id=?").bind(fabrication, quantity, sizeRange, body.orderDate, body.deliveryDate, body.priority, body.remarks, timestamp, lotId),
         db.prepare("INSERT INTO audit_logs (user_id,department_id,lot_id,design_id,action,previous_value,new_value,quantity,remarks,created_at) VALUES (1,1,?,?, 'Lot Updated',?,?,?,?,?)").bind(lotId, lot.design_id, JSON.stringify(lot), JSON.stringify(body), quantity, String(body.remarks ?? ""), timestamp),
-      ]);
+      ];
+      if (hasBreakdown) statements.push(
+        db.prepare("DELETE FROM lot_size_breakdowns WHERE lot_id=?").bind(lotId),
+        ...sizes.map((item) => db.prepare("INSERT INTO lot_size_breakdowns (lot_id,colour,size,quantity) VALUES (?,?,?,?)").bind(lotId, item.colour, item.size, item.quantity)),
+      );
+      await db.batch(statements);
       return Response.json({ ok: true, message: `${String(lot.lot_no)} updated.`, state: await state() });
     }
 

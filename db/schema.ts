@@ -85,6 +85,7 @@ export const lots = sqliteTable("lots", {
 export const lotSizeBreakdowns = sqliteTable("lot_size_breakdowns", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   lotId: integer("lot_id").notNull().references(() => lots.id),
+  colour: text("colour").notNull().default("General"),
   size: text("size").notNull(),
   quantity: integer("quantity").notNull(),
   ...timestamps,
