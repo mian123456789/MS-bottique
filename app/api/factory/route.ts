@@ -112,7 +112,10 @@ async function readSession(request: Request): Promise<Session | null> {
   } catch { return null; }
 }
 
-const sessionCookie = (token: string) => `ms_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${12 * 60 * 60}`;
+// Keep authentication for the current browser session only. The browser removes
+// this cookie when the ERP/browser is closed, so reopening always requires login.
+// The signed token still expires after 12 hours if the browser stays open.
+const sessionCookie = (token: string) => `ms_session=${token}; Path=/; HttpOnly; SameSite=Lax`;
 const clearedCookie = "ms_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
 
 const publicUser = (row: Record<string, unknown>) => ({
