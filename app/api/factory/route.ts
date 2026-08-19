@@ -152,6 +152,7 @@ const createStatements = [
   `CREATE TABLE IF NOT EXISTS lot_history (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id INTEGER NOT NULL REFERENCES lots(id), user_id INTEGER REFERENCES users(id), department_id INTEGER REFERENCES departments(id), action TEXT NOT NULL, quantity INTEGER NOT NULL DEFAULT 0, remarks TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER REFERENCES users(id), actor_name TEXT NOT NULL DEFAULT 'System', audience TEXT NOT NULL DEFAULT 'Owner', category TEXT NOT NULL DEFAULT 'Production', level TEXT NOT NULL DEFAULT 'info', title TEXT NOT NULL, message TEXT NOT NULL, link TEXT NOT NULL DEFAULT '', read INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER REFERENCES users(id), department_id INTEGER REFERENCES departments(id), lot_id INTEGER REFERENCES lots(id), design_id INTEGER REFERENCES designs(id), action TEXT NOT NULL, previous_value TEXT NOT NULL DEFAULT '', new_value TEXT NOT NULL DEFAULT '', quantity INTEGER NOT NULL DEFAULT 0, remarks TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE TABLE IF NOT EXISTS variant_progress (id INTEGER PRIMARY KEY AUTOINCREMENT, lot_id INTEGER NOT NULL REFERENCES lots(id), department TEXT NOT NULL, colour TEXT NOT NULL DEFAULT 'General', size TEXT NOT NULL DEFAULT 'ALL', received_qty INTEGER NOT NULL DEFAULT 0, completed_qty INTEGER NOT NULL DEFAULT 0, rejected_qty INTEGER NOT NULL DEFAULT 0, rework_qty INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS suppliers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, contact TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS purchases (id INTEGER PRIMARY KEY AUTOINCREMENT, purchase_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id), purchase_date TEXT NOT NULL, item TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Fabric', quantity REAL NOT NULL DEFAULT 0, unit TEXT NOT NULL DEFAULT 'Meters', rate REAL NOT NULL DEFAULT 0, total_amount REAL NOT NULL DEFAULT 0, paid_amount REAL NOT NULL DEFAULT 0, balance_amount REAL NOT NULL DEFAULT 0, payment_method TEXT NOT NULL DEFAULT 'Cash', status TEXT NOT NULL DEFAULT 'Ordered', invoice_no TEXT NOT NULL DEFAULT '', received_date TEXT, remarks TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS shops (id INTEGER PRIMARY KEY AUTOINCREMENT, shop_code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, address TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', manager TEXT NOT NULL DEFAULT '', logo_url TEXT NOT NULL DEFAULT '', invoice_prefix TEXT NOT NULL DEFAULT 'INV', footer_note TEXT NOT NULL DEFAULT 'Thank you for shopping with us.', opening_cash REAL NOT NULL DEFAULT 0, opening_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Active', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
@@ -162,6 +163,7 @@ const createStatements = [
   `CREATE TABLE IF NOT EXISTS shop_expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, shop_id INTEGER NOT NULL REFERENCES shops(id), expense_date TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'General', description TEXT NOT NULL DEFAULT '', amount REAL NOT NULL DEFAULT 0, paid_by TEXT NOT NULL DEFAULT '', payment_method TEXT NOT NULL DEFAULT 'Cash', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS shop_attendance (id INTEGER PRIMARY KEY AUTOINCREMENT, shop_id INTEGER NOT NULL REFERENCES shops(id), staff_name TEXT NOT NULL, attendance_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Present', in_time TEXT NOT NULL DEFAULT '', out_time TEXT NOT NULL DEFAULT '', remarks TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE TABLE IF NOT EXISTS shop_day_close (id INTEGER PRIMARY KEY AUTOINCREMENT, shop_id INTEGER NOT NULL REFERENCES shops(id), close_date TEXT NOT NULL, opening_cash REAL NOT NULL DEFAULT 0, cash_sales REAL NOT NULL DEFAULT 0, bank_sales REAL NOT NULL DEFAULT 0, total_sales REAL NOT NULL DEFAULT 0, expenses REAL NOT NULL DEFAULT 0, expected_cash REAL NOT NULL DEFAULT 0, counted_cash REAL NOT NULL DEFAULT 0, difference REAL NOT NULL DEFAULT 0, invoices INTEGER NOT NULL DEFAULT 0, closed_by TEXT NOT NULL DEFAULT '', remarks TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_variant_progress_unique ON variant_progress(lot_id, department, colour, size)`,
   `CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(status)`,
   `CREATE INDEX IF NOT EXISTS idx_shop_shipments_shop ON shop_shipments(shop_id, status)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_shop_inventory_unique ON shop_inventory(shop_id, sku)`,
@@ -227,6 +229,11 @@ async function migrateColumns() {
 // Sample data is offered once. After the owner clears the system this flag stays
 // set, so an empty table is never mistaken for a fresh install to re-seed.
 async function sampleDataSettled() {
+  // Sample data is opt-in. Without SEED_SAMPLE_DATA=true a database is left empty
+  // and stays empty: a fresh deployment must never invent lots, staff or shops,
+  // and a system the owner cleared must not refill itself.
+  const optedIn = String(process.env.SEED_SAMPLE_DATA ?? "").toLowerCase() === "true";
+  if (!optedIn) return true;
   const row = await getD1().prepare("SELECT seeded FROM system_settings WHERE id=1").first<{ seeded: number }>();
   return Number(row?.seeded ?? 0) === 1;
 }
@@ -475,6 +482,21 @@ const logoLink = (row: Record<string, unknown>, shopId?: number) => {
   return { ...row, logo_url: shopId ? `/api/factory/logo?shop=${shopId}&v=${version}` : `/api/factory/logo?v=${version}` };
 };
 
+// When a lot enters a department, its colour/size rows are seeded from what the
+// previous stage actually completed — from the issued breakdown for the first
+// department — so every stage carries the same variants forward.
+async function seedVariantProgress(lotId: number, from: string, to: string, timestamp: string) {
+  const db = getD1();
+  const source = from === "Issue Lot"
+    ? await db.prepare("SELECT colour, size, quantity AS qty FROM lot_size_breakdowns WHERE lot_id=?").bind(lotId).all<{ colour: string; size: string; qty: number }>()
+    : await db.prepare("SELECT colour, size, completed_qty AS qty FROM variant_progress WHERE lot_id=? AND department=?").bind(lotId, from).all<{ colour: string; size: string; qty: number }>();
+  const rows = source.results.filter((row) => Number(row.qty) > 0);
+  if (!rows.length) return;
+  await db.batch(rows.map((row) => db.prepare(
+    "INSERT INTO variant_progress (lot_id,department,colour,size,received_qty,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(lot_id,department,colour,size) DO UPDATE SET received_qty=received_qty+excluded.received_qty,updated_at=excluded.updated_at"
+  ).bind(lotId, to, String(row.colour || "General"), String(row.size || "ALL"), Number(row.qty), timestamp, timestamp)));
+}
+
 async function getShopState(shopId: number) {
   const db = getD1();
   const [shops, inventory, sales, saleItems, expenses, attendance, dayClose, shipments] = await Promise.all([
@@ -497,10 +519,11 @@ async function getShopState(shopId: number) {
 async function getState(scope: Scope = { kind: "factory" }) {
   if (scope.kind === "shop") return getShopState(scope.shopId);
   const db = getD1();
-  const [lots, sizes, embroidery, cutting, stitching, finishing, packing, warehouse, receipts, dispatches, transfers, remarks, history, audits, customers, designs, notifications, settings, gatepasses, employees, attendance, salaries, pieceWork, advances,
+  const [lots, sizes, variants, embroidery, cutting, stitching, finishing, packing, warehouse, receipts, dispatches, transfers, remarks, history, audits, customers, designs, notifications, settings, gatepasses, employees, attendance, salaries, pieceWork, advances,
     users, suppliers, purchases, shops, shopShipments, shopInventory, shopSales, shopExpenses] = await Promise.all([
     db.prepare(`SELECT l.*, d.design_no, c.name AS customer, c.destination FROM lots l JOIN designs d ON d.id=l.design_id JOIN customers c ON c.id=l.customer_id ORDER BY l.id DESC`).all(),
     db.prepare("SELECT * FROM lot_size_breakdowns ORDER BY id").all(),
+    db.prepare("SELECT * FROM variant_progress ORDER BY lot_id, department, colour, size").all(),
     db.prepare("SELECT * FROM embroidery_records ORDER BY id DESC").all(),
     db.prepare("SELECT * FROM cutting_records ORDER BY id DESC").all(),
     db.prepare("SELECT * FROM stitching_records ORDER BY id DESC").all(),
@@ -535,7 +558,7 @@ async function getState(scope: Scope = { kind: "factory" }) {
     db.prepare("SELECT id, shop_id, expense_date, amount, category FROM shop_expenses ORDER BY id DESC LIMIT 200").all(),
   ]);
   return {
-    lots: lots.results, sizes: sizes.results,
+    lots: lots.results, sizes: sizes.results, variants: variants.results,
     records: { Embroidery: embroidery.results, Cutting: cutting.results, Stitching: stitching.results, Finishing: finishing.results, Packing: packing.results },
     warehouse: warehouse.results, receipts: receipts.results, dispatches: dispatches.results,
     transfers: transfers.results, remarks: remarks.results, history: history.results, audits: audits.results,
@@ -1176,7 +1199,7 @@ export async function POST(request: Request) {
         "purchases", "suppliers",
         "audit_logs", "notifications",
         "customer_dispatches", "warehouse_inventory", "warehouse_receipts", "gatepasses",
-        "department_transfers", "lot_remarks", "lot_history", "lot_size_breakdowns",
+        "department_transfers", "lot_remarks", "lot_history", "lot_size_breakdowns", "variant_progress",
         ...Object.values(tableByDepartment),
         "lots", "designs", "customers",
       ];
@@ -1230,6 +1253,7 @@ export async function POST(request: Request) {
         db.prepare("DELETE FROM lot_remarks WHERE lot_id=?").bind(targetId),
         db.prepare("DELETE FROM lot_history WHERE lot_id=?").bind(targetId),
         db.prepare("DELETE FROM lot_size_breakdowns WHERE lot_id=?").bind(targetId),
+        db.prepare("DELETE FROM variant_progress WHERE lot_id=?").bind(targetId),
         // The audit trail survives the record it described.
         db.prepare("UPDATE audit_logs SET lot_id=NULL WHERE lot_id=?").bind(targetId),
         db.prepare("DELETE FROM lots WHERE id=?").bind(targetId),
@@ -1531,6 +1555,30 @@ export async function POST(request: Request) {
       if (!table) return bad("Invalid production department.");
       const record = await db.prepare(`SELECT * FROM ${table} WHERE lot_id=?`).bind(lotId).first<Record<string, unknown>>();
       if (!record) return bad("This lot has not been received by this department.");
+
+      // Colour/size rows are the source of truth when supplied: the department
+      // totals are summed from them rather than typed twice.
+      const variants = Array.isArray(body.variants) ? body.variants as Array<{ colour: string; size: string; completedQty: number; rejectedQty: number; reworkQty: number }> : [];
+      if (variants.length) {
+        const existing = await db.prepare("SELECT colour, size, received_qty FROM variant_progress WHERE lot_id=? AND department=?").bind(lotId, department).all<{ colour: string; size: string; received_qty: number }>();
+        const capacity = new Map(existing.results.map((row) => [`${row.colour}|${row.size}`, Number(row.received_qty)]));
+        for (const row of variants) {
+          const key = `${String(row.colour)}|${String(row.size)}`;
+          const limit = capacity.get(key);
+          if (limit === undefined) return bad(`${String(row.colour)} / ${String(row.size)} was not received by ${department}.`);
+          const done = Number(row.completedQty ?? 0), bad1 = Number(row.rejectedQty ?? 0), again = Number(row.reworkQty ?? 0);
+          if (![done, bad1, again].every((value) => Number.isInteger(value) && value >= 0)) return bad("Colour / size quantities cannot be negative.");
+          if (done + bad1 > limit) return bad(`${String(row.colour)} / ${String(row.size)}: completed plus rejected cannot exceed the ${limit.toLocaleString()} PCS received.`);
+        }
+        const stamp = now();
+        await db.batch(variants.map((row) => db.prepare(
+          "UPDATE variant_progress SET completed_qty=?,rejected_qty=?,rework_qty=?,updated_at=? WHERE lot_id=? AND department=? AND colour=? AND size=?"
+        ).bind(Number(row.completedQty ?? 0), Number(row.rejectedQty ?? 0), Number(row.reworkQty ?? 0), stamp, lotId, department, String(row.colour), String(row.size))));
+        body.completedQty = variants.reduce((sum, row) => sum + Number(row.completedQty ?? 0), 0);
+        body.rejectedQty = variants.reduce((sum, row) => sum + Number(row.rejectedQty ?? 0), 0);
+        body.reworkQty = variants.reduce((sum, row) => sum + Number(row.reworkQty ?? 0), 0);
+      }
+
       const completed = Number(body.completedQty ?? 0);
       const rejected = Number(body.rejectedQty ?? 0);
       const rework = Number(body.reworkQty ?? 0);
@@ -1604,6 +1652,8 @@ export async function POST(request: Request) {
         statements.push(db.prepare(`INSERT INTO ${targetTable} (lot_id,design_id,department_id,user_id,received_qty,status,remarks,created_at,updated_at) VALUES (?,?,?,1,?,'Waiting',?,?,?) ON CONFLICT(lot_id) DO UPDATE SET received_qty=received_qty+excluded.received_qty,remarks=excluded.remarks,updated_at=excluded.updated_at`).bind(lotId, lot.design_id, toDepartmentId, quantity, remark, timestamp, timestamp));
       }
       await db.batch(statements);
+      // Carry the colour/size rows into the receiving department.
+      if (tableByDepartment[to]) await seedVariantProgress(lotId, from, to, timestamp);
       return Response.json({ ok: true, message: `${quantity.toLocaleString()} PCS transferred to ${to}.`, state: await state() });
     }
 

@@ -636,3 +636,25 @@ tbody tr.row-selected { background: var(--green-soft) !important; }
   .main-shell { padding: 0; }.content { padding: 0; max-width: none; }.panel { box-shadow: none; }.page-stack > * { break-inside: avoid; } body { background: white; }
   .table-scroll { overflow: visible!important; } table { min-width: 0!important; }
 }
+
+/* Colour / size-wise production entry */
+.variant-grid { margin: 18px 0; border: 1px solid var(--line); border-radius: 11px; overflow: hidden; background: white; }
+.variant-grid-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 14px 16px; background: var(--soft); border-bottom: 1px solid var(--line); }
+.variant-grid-head .eyebrow { margin-bottom: 4px; font-size: 8px; }
+.variant-grid-head p { margin: 0; color: var(--muted); font-size: 9px; }
+.variant-table { max-height: 320px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; }
+.variant-row { display: grid; grid-template-columns: minmax(96px, 1.3fr) 70px 74px 1fr 1fr 1fr 74px; gap: 8px; align-items: center; padding: 8px 16px; border-bottom: 1px solid #eef2ef; }
+.variant-row:last-child { border-bottom: 0; }
+.variant-header { position: sticky; top: 0; z-index: 1; background: white; color: var(--muted); font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; }
+.variant-row input { height: 32px; width: 100%; border: 1px solid #dce2e8; border-radius: 7px; padding: 0 8px; font-size: 11px; font-weight: 700; text-align: right; outline: 0; font-variant-numeric: tabular-nums; }
+.variant-row input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(47,158,68,.1); }
+.variant-colour { display: inline-flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 750; min-width: 0; }
+.variant-colour i { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(16,40,26,.18); flex: 0 0 auto; }
+.variant-size { display: inline-block; padding: 3px 8px; border-radius: 6px; background: var(--soft); font-size: 9px; font-weight: 800; text-align: center; }
+.variant-total { display: flex; gap: 20px; flex-wrap: wrap; padding: 12px 16px; background: var(--green-soft); border-top: 1px solid var(--green-line); color: #3f6459; font-size: 9px; font-weight: 750; }
+.variant-total b { display: block; color: var(--ink); font-size: 13px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+@media (max-width: 800px) {
+  .variant-row { grid-template-columns: 1fr 1fr 1fr; row-gap: 6px; }
+  .variant-header { display: none; }
+  .variant-colour, .variant-size { grid-column: span 3; }
+}
