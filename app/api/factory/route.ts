@@ -115,7 +115,13 @@ async function readSession(request: Request): Promise<Session | null> {
 // Keep authentication for the current browser session only. The browser removes
 // this cookie when the ERP/browser is closed, so reopening always requires login.
 // The signed token still expires after 12 hours if the browser stays open.
-const sessionCookie = (token: string) => `ms_session=${token}; Path=/; HttpOnly; SameSite=Lax`;
+// Secure is set from the actual connection rather than NODE_ENV: behind HTTPS the
+// session token must never travel in clear, but a plain-HTTP install would be
+// locked out of signing in by a Secure cookie it can never send back.
+const overHttps = (request: Request) =>
+  request.headers.get("x-forwarded-proto")?.split(",")[0].trim() === "https" || new URL(request.url).protocol === "https:";
+const sessionCookie = (token: string, request: Request) =>
+  `ms_session=${token}; Path=/; HttpOnly; SameSite=Lax${overHttps(request) ? "; Secure" : ""}`;
 const clearedCookie = "ms_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
 
 const publicUser = (row: Record<string, unknown>) => ({
@@ -608,7 +614,7 @@ export async function POST(request: Request) {
       if (!row || !(await passwordMatches(password, String(row.password_hash)))) return bad("Incorrect username or password.", 401);
       if (Number(row.active) !== 1) return bad("This account has been disabled. Ask the owner to re-enable it.", 403);
       const token = await createSession(row);
-      return Response.json({ ok: true, user: publicUser(row), message: `Welcome back, ${String(row.name)}.` }, { headers: { "Set-Cookie": sessionCookie(token) } });
+      return Response.json({ ok: true, user: publicUser(row), message: `Welcome back, ${String(row.name)}.` }, { headers: { "Set-Cookie": sessionCookie(token, request) } });
     }
 
     if (action === "logout") {
