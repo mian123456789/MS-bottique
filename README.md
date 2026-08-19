@@ -2,8 +2,8 @@
 
 Lot and production tracking from Issue Lot through Gatepass, Warehouse and
 Customer Dispatch, plus purchasing, payroll and a point-of-sale system for each
-retail shop. Built on [vinext](https://github.com/cloudflare/vinext) with
-Cloudflare D1 and Drizzle.
+retail shop. A Next.js application that runs on plain Node.js and keeps its data
+in a single SQLite file.
 
 ## How to open the app
 
@@ -20,40 +20,59 @@ The shops each run their own point-of-sale. Open **Shops** in the sidebar and
 click **Open POS** on a shop card; it opens in a new browser tab at
 `http://localhost:3000/?shop=<id>`.
 
-Demo sign-in: `admin@msboutique.com` / `admin123`
-
 ## Sign in
 
-The first run creates a single owner account, `Admin`. Its password comes from the
-`OWNER_PASSWORD` secret; if that is not set it falls back to a value written in
-`db/runtime.ts`, which is **public in this repository**.
+The first run creates a single owner account, `Admin`. Its password comes from
+`OWNER_PASSWORD` — `.env.local` on this laptop, the host's environment variables
+in production. No password is written anywhere in this repository.
 
-> **Before putting this on the internet:** set `OWNER_PASSWORD` (see below) on a
-> fresh database, or sign in and change the password immediately under
-> **Users & Permissions**. Anyone reading this repo can see the fallback.
+If `OWNER_PASSWORD` is not set, the first boot mints a one-time password and prints
+it to the server window. Sign in with it, then set `OWNER_PASSWORD` to choose your
+own.
 
 The owner creates every other login and decides what each one opens — a *Staff*
 account sees only the factory pages you tick, a *Shop* account opens one shop's
 point of sale and nothing else.
 
-## Deploying
+## Where the data lives
 
-This is a **Cloudflare Workers** application. `db/runtime.ts` imports
-`cloudflare:workers` and the data lives in **Cloudflare D1**, so it needs the
-Workers runtime — it will not run on PHP shared hosting, and plain Node.js hosting
-would require replacing the whole D1 data layer first.
+A single SQLite file, by default `~/.ms-boutique-data/ms-boutique.sqlite`. Set
+`MS_BOUTIQUE_DB_PATH` to put it somewhere else. **Back up that one file and you
+have backed up the whole system.**
+
+The file must sit on storage that survives a restart and a redeploy. Hosting that
+wipes the filesystem between deploys loses every lot, sale and salary record, so
+point `MS_BOUTIQUE_DB_PATH` at a persistent disk.
+
+A new database starts empty — no demo lots, staff or shops. Set
+`SEED_SAMPLE_DATA=true` if you want the sample data created for a demo.
+
+## Deploying to Hostinger
+
+This needs Hostinger's **Node.js hosting** (a VPS or a Node app plan), not PHP
+shared hosting — the app is a server, not a folder of static files.
+
+1. Push this repository to GitHub and connect it in hPanel, or upload the folder.
+2. Set the environment variables: `OWNER_PASSWORD`, `NODE_ENV=production`, and
+   `MS_BOUTIQUE_DB_PATH` pointing at a persistent path.
+3. Build and start:
 
 ```bash
-npx wrangler d1 create ms-boutique
-# put the returned database_id in wrangler.jsonc, then:
-npx wrangler secret put OWNER_PASSWORD
+npm ci
 npm run build
-npx wrangler deploy
+npm start
 ```
 
-To serve it from your own domain, add the hostname as a custom domain on the
-Worker, then point that hostname at Cloudflare with a CNAME in your registrar's
-DNS. The domain must be one you actually own.
+Hostinger's Node setup asks for the start command (`npm start`), the app's port,
+and the Node version (22 or newer).
+
+### Pointing a domain at it
+
+Add the hostname in hPanel, then create the DNS record for it. **The domain has to
+be one you own.** A subdomain only exists under a domain you control:
+`erp.msbottique.factory.com` would require owning `factory.com`, which belongs to
+someone else, so that address cannot be created. `erp.<your-domain>` works once
+`<your-domain>` is registered to you.
 
 ## Prerequisites
 
@@ -67,7 +86,6 @@ npm install
 npm run dev
 ```
 
-This starter does not use `wrangler.jsonc`.
 
 ## Included Shape
 
@@ -141,11 +159,12 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 ## Useful Commands
 
 - `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build and verify the rendered HTML
+- `npm run build`: build for production
+- `npm start`: run the production build
+- `npm test`: run the build as a check
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
 ## Learn More
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+- [Next.js Documentation](https://nextjs.org/docs)
+- [Drizzle Documentation](https://orm.drizzle.team/docs/overview)

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -169,8 +170,27 @@ export function getD1(): D1Database {
   return database;
 }
 
+let mintedOwnerPassword: string | undefined;
+
+// The owner password is never a literal in the source: this repository is public,
+// so a default here would be a published credential. It comes from OWNER_PASSWORD
+// (.env.local locally, the host's environment in production). With none set the
+// first boot mints a one-time password and prints it, so a fresh install is still
+// reachable without publishing anything.
 export function ownerBootstrapPassword(): string {
   const configured = process.env.OWNER_PASSWORD;
   if (typeof configured === "string" && configured.trim().length >= 8) return configured.trim();
-  return "Admin&8687";
+  if (!mintedOwnerPassword) {
+    mintedOwnerPassword = randomBytes(9).toString("base64url");
+    console.warn(
+      `
+[MS Boutique] OWNER_PASSWORD is not set.
+` +
+      `[MS Boutique] Owner account created with a one-time password: ${mintedOwnerPassword}
+` +
+      `[MS Boutique] Sign in as "Admin", then set OWNER_PASSWORD to choose your own.
+`
+    );
+  }
+  return mintedOwnerPassword;
 }
