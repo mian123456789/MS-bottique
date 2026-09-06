@@ -9,6 +9,7 @@ import {
   Receipt, ShoppingBag, Sparkles, Store, Trash2, TrendingUp, Truck, Upload, UserCog, UserPlus, Users, Wallet, Warehouse as WarehouseIcon, X,
 } from "lucide-react";
 import { apiFetch, escapeHtml, hasUploadedLogo, initials, printDocument, readLogoFile, SessionUser } from "./shared";
+import DashboardView, { type DashboardMetric } from "./dashboard-view";
 import { Dispatch, FormEvent, ReactNode, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Row = Record<string, string | number | boolean | null>;
@@ -364,11 +365,14 @@ type PageProps = { state: FactoryState; post: (payload: Record<string, unknown>)
 
 function LoadingView() { return <div className="loading-view"><LoaderCircle className="spin" size={30} /><h2>Preparing the factory floor…</h2><p>Loading live lots, quantities and department activity.</p></div>; }
 
-type Card = { label: string; value: string | number; detail: string; icon: typeof Route; tone: string };
-
-// The dashboard is assembled from the areas this account actually works in, so a
-// warehouse user opens straight onto their own stock rather than the whole factory.
+// Dashboard figures and actions are scoped to the areas this account can open.
 function Dashboard({ state, setModal, openPage, user }: PageProps) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+  const dashboardToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const owner = user.role === "Owner";
   const can = (page: string) => owner || user.permissions.includes(page);
   const myDepartments = departmentPages.filter(can);
@@ -379,111 +383,82 @@ function Dashboard({ state, setModal, openPage, user }: PageProps) {
   const seesInventory = can("Inventory");
   const seesPurchase = can("Purchase");
   const seesShops = can("Shops");
-  const seesPayroll = can("Salary") || can("Attendance") || can("Employees");
-
-  const cards: Card[] = [];
-  if (seesProduction) {
-    const totalQty = state.lots.reduce((sum, lot) => sum + number(lot.quantity), 0);
-    const active = state.lots.filter((lot) => !/Delivered|Dispatched/i.test(String(lot.status))).length;
-    const delayed = state.lots.filter((lot) => String(lot.required_delivery_date) < today && !/Delivered|Dispatched/i.test(String(lot.status))).length;
-    cards.push(
-      { label: "Active Lots", value: active, detail: `${state.lots.length} total issued`, icon: Route, tone: "green" },
-      { label: "Production QTY", value: fmt(totalQty), detail: "Across active orders", icon: Factory, tone: "blue" },
-      { label: "Delayed Lots", value: delayed, detail: delayed ? "Needs attention" : "All on schedule", icon: AlertTriangle, tone: "red" },
-    );
-  }
-  // A department user gets their own received / pending / completed figures.
-  for (const department of myDepartments) {
-    const records = state.records[department] || [];
-    const received = records.reduce((sum, row) => sum + number(row.received_qty), 0);
-    const completed = records.reduce((sum, row) => sum + number(row.completed_qty), 0);
-    cards.push({ label: `${department} Pending`, value: fmt(Math.max(0, received - completed)), detail: `${fmt(completed)} of ${fmt(received)} PCS done`, icon: departmentCardIcon(department), tone: "purple" });
-  }
-  if (seesGatepass) {
-    const pending = state.gatepasses.filter((row) => row.status === "Pending");
-    cards.push({ label: "Gate Passes Pending", value: pending.length, detail: `${fmt(pending.reduce((sum, row) => sum + number(row.quantity), 0))} PCS awaiting issue`, icon: DoorOpen, tone: "orange" });
-  }
+  const seesPayroll = can("Salary");
+  const seesAllLots = can("Lot Progress") || can("Issue Lot");
+  const showLots = seesProduction || seesWarehouse || seesGatepass || seesDispatch || seesInventory;
+  const myAreas = new Set([
+    ...myDepartments, ...(seesWarehouse || seesInventory ? ["Warehouse"] : []),
+    ...(seesGatepass ? ["Gatepass"] : []), ...(seesDispatch ? ["Customer Dispatch"] : []),
+    ...(can("Issue Lot") ? ["Issue Lot"] : []),
+  ]);
+  // Partial transfers can leave pieces in an earlier department.
+  const departmentLotIds = new Set(myDepartments.flatMap((department) =>
+    (state.records[department] || []).filter((row) => number(row.received_qty) > number(row.transferred_qty)).map((row) => number(row.lot_id)),
+  ));
+  const myLots = showLots ? state.lots.filter((lot) => seesAllLots || myAreas.has(String(lot.current_department)) || departmentLotIds.has(number(lot.id))) : [];
+  const isActive = (lot: Row) => !/^(Delivered|Dispatched|Fully Dispatched|Cancelled)$/i.test(String(lot.status));
+  const isOverdue = (lot: Row) => isActive(lot) && /^\d{4}-\d{2}-\d{2}$/.test(String(lot.required_delivery_date || "")) && String(lot.required_delivery_date) < dashboardToday;
+  const activeLots = myLots.filter(isActive);
+  const attention = activeLots.filter((lot) => isOverdue(lot) || /hold|rework|delay/i.test(String(lot.status)))
+    .sort((a, b) => String(a.required_delivery_date || "9999").localeCompare(String(b.required_delivery_date || "9999")));
+  const lots = [...myLots].sort((a, b) => Number(isOverdue(b)) - Number(isOverdue(a)) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  const primary: DashboardMetric[] = [];
+  const operations: DashboardMetric[] = [];
+  if (seesProduction) primary.push(
+    { label: "Active lots", value: activeLots.length, detail: `${myLots.length} total lots in your view`, icon: Route, tone: "green", page: can("Lot Progress") ? "Lot Progress" : undefined },
+    { label: "Active order quantity", value: fmt(activeLots.reduce((sum, lot) => sum + number(lot.quantity), 0)), detail: "PCS across open orders", icon: Factory, tone: "blue" },
+    { label: "Overdue lots", value: activeLots.filter(isOverdue).length, detail: "Open orders past their due date", icon: AlertTriangle, tone: "orange" },
+  );
   if (seesWarehouse || seesInventory) {
     const stock = state.warehouse.reduce((sum, row) => sum + number(row.balance_qty), 0);
     const nonReceivable = state.receipts.reduce((sum, row) => sum + number(row.non_receivable_qty), 0);
-    const expected = state.receipts.filter((row) => String(row.status) === "Expected");
-    cards.push(
-      { label: "Warehouse Stock", value: fmt(stock), detail: "Finished goods PCS on hand", icon: WarehouseIcon, tone: "teal" },
-      { label: "Awaiting Receipt", value: fmt(expected.reduce((sum, row) => sum + number(row.received_qty), 0)), detail: `${expected.length} gate pass${expected.length === 1 ? "" : "es"} in transit`, icon: PackageOpen, tone: "orange" },
-      { label: "Non-Receivable", value: fmt(nonReceivable), detail: nonReceivable ? "Held out of stock" : "None reported", icon: AlertTriangle, tone: "red" },
+    const expected = state.receipts.filter((row) => row.status === "Expected");
+    const stockPage = seesWarehouse ? "Warehouse" : "Inventory";
+    primary.push({ label: "Warehouse stock", value: fmt(stock), detail: "Finished goods PCS on hand", icon: WarehouseIcon, tone: "teal", page: stockPage });
+    operations.push(
+      { label: "Awaiting receipt", value: fmt(expected.reduce((sum, row) => sum + number(row.received_qty), 0)), detail: `${expected.length} gate passes in transit`, icon: PackageOpen, tone: "orange", page: stockPage },
+      { label: "Non-receivable", value: fmt(nonReceivable), detail: nonReceivable ? "PCS held out of stock" : "No exceptions reported", icon: AlertTriangle, tone: "red", page: stockPage },
     );
   }
-  if (seesDispatch) {
-    cards.push({ label: "Ready to Dispatch", value: state.warehouse.filter((row) => number(row.balance_qty) > 0).length, detail: `${state.dispatches.length} shipments recorded`, icon: Truck, tone: "orange" });
+  if (seesGatepass) {
+    const pending = state.gatepasses.filter((row) => row.status === "Pending");
+    operations.push({ label: "Gate passes pending", value: pending.length, detail: `${fmt(pending.reduce((sum, row) => sum + number(row.quantity), 0))} PCS awaiting release`, icon: DoorOpen, tone: "orange", page: "Gatepass" });
   }
-  if (seesPurchase) {
-    const outstanding = state.purchases.reduce((sum, row) => sum + number(row.balance_amount), 0);
-    cards.push({ label: "Purchase Outstanding", value: money(outstanding), detail: `${state.purchases.filter((row) => !/Received/i.test(String(row.status))).length} awaiting delivery`, icon: ShoppingBag, tone: "blue" });
-  }
+  if (seesDispatch) operations.push({ label: "Ready to dispatch", value: state.warehouse.filter((row) => number(row.balance_qty) > 0).length, detail: "Lots with stock available", icon: Truck, tone: "blue", page: "Customer Dispatch" });
+  if (seesPurchase) operations.push({ label: "Purchase outstanding", value: money(state.purchases.reduce((sum, row) => sum + number(row.balance_amount), 0)), detail: `${state.purchases.filter((row) => !/Received/i.test(String(row.status))).length} awaiting delivery`, icon: ShoppingBag, tone: "blue", page: "Purchase" });
   if (seesPayroll) {
-    const unpaid = state.salaries.filter((row) => String(row.period) === currentPeriod && row.payment_status !== "Paid");
-    cards.push({ label: "Payroll Outstanding", value: money(unpaid.reduce((sum, row) => sum + number(row.net_payable), 0)), detail: `${unpaid.length} unpaid this month`, icon: Wallet, tone: "purple" });
+    const unpaid = state.salaries.filter((row) => String(row.period) === dashboardToday.slice(0, 7) && row.payment_status !== "Paid");
+    operations.push({ label: "Payroll outstanding", value: money(unpaid.reduce((sum, row) => sum + number(row.net_payable), 0)), detail: `${unpaid.length} unpaid · ${now.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}`, icon: Wallet, tone: "purple", page: "Salary" });
   }
-
-  const chartDepartments = myDepartments.length ? myDepartments : workflow.slice(1, 7);
-  const deptData = chartDepartments.map((department) => ({ department, count: state.lots.filter((lot) => lot.current_department === department).length, qty: state.lots.filter((lot) => lot.current_department === department).reduce((sum, lot) => sum + number(lot.quantity), 0) }));
-  const maxQty = Math.max(...deptData.map((item) => item.qty), 1);
-  const chartTotal = deptData.reduce((sum, item) => sum + item.qty, 0);
-
-  // Activity is filtered to the areas this account can actually see.
-  const myAreas = new Set([...myDepartments, ...(seesWarehouse ? ["Warehouse"] : []), ...(seesGatepass ? ["Gatepass"] : []), ...(seesDispatch ? ["Customer Dispatch"] : []), ...(seesProduction ? ["Issue Lot"] : [])]);
+  // Accounts without production access still get a useful, relevant first row.
+  while (primary.length < (seesProduction ? 4 : 3) && operations.length) primary.push(operations.shift()!);
+  const stages = myDepartments.map((name) => {
+    const records = state.records[name] || [];
+    return {
+      name, icon: departmentCardIcon(name),
+      received: records.reduce((sum, row) => sum + number(row.received_qty), 0),
+      completed: records.reduce((sum, row) => sum + number(row.completed_qty), 0),
+      pending: records.reduce((sum, row) => sum + Math.max(0, number(row.received_qty) - number(row.completed_qty)), 0),
+      lots: new Set(records.filter((row) => number(row.received_qty) > number(row.completed_qty)).map((row) => number(row.lot_id))).size,
+    };
+  });
   const activity = owner ? state.history : state.history.filter((row) => myAreas.has(String(row.department)));
-  const myLots = owner || !myDepartments.length ? state.lots : state.lots.filter((lot) => myDepartments.includes(String(lot.current_department)));
-
-  const focus = owner ? "Here’s what’s moving across your factory today."
-    : myDepartments.length === 1 && !seesWarehouse ? `Your ${myDepartments[0]} department at a glance.`
-    : seesWarehouse && myDepartments.length === 0 ? "Your warehouse stock at a glance."
-    : "Everything you have access to, at a glance.";
-
-  return <div className="page-stack">
-    <section className="dashboard-hero"><div><span className="eyebrow light">{formatDate(today).toUpperCase()}</span><h2>Good afternoon, {user.name.split(" ")[0]}.</h2><p>{focus}</p></div>{can("Issue Lot") && <button className="button light" onClick={() => setModal({ type: "new-lot" })}><Plus size={17} /> Issue New Lot</button>}</section>
-
-    {cards.length > 0 && <section className="metric-grid">{cards.map((card) => <article className="metric-card" key={card.label}><div className={`metric-icon ${card.tone}`}><card.icon size={20} /></div><div><span>{card.label}</span><strong>{card.value}</strong><small>{card.detail}</small></div></article>)}</section>}
-
-    {seesProduction && <section className="dashboard-grid">
-      <article className="panel chart-panel"><div className="panel-head"><div><span className="eyebrow">PRODUCTION OVERVIEW</span><h3>{myDepartments.length ? "Your department load" : "Department-wise production"}</h3></div><span className="live-indicator"><i /> Live</span></div>
-        <div className="bar-chart">{deptData.map((item) => <div className="bar-group" key={item.department}><div className="bar-value">{item.qty ? `${Math.round(item.qty / 100) / 10}k` : "0"}</div><div className="bar-track"><span style={{ height: `${Math.max(7, item.qty / maxQty * 100)}%` }} /></div><small>{item.department.slice(0, 4)}</small></div>)}</div>
-        <div className="chart-legend"><span><i className="legend-green" />Active production qty</span><b>{fmt(chartTotal)} PCS</b></div>
-      </article>
-      <article className="panel location-panel"><div className="panel-head"><div><span className="eyebrow">LIVE LOCATION</span><h3>Current lot location</h3></div>{can("Lot Progress") && <button className="link-button" onClick={() => openPage("Lot Progress")}>View all <ArrowRight size={14} /></button>}</div>
-        <div className="donut-row"><div className="donut" style={{ background: donutGradient(deptData) }}><span><b>{myLots.length}</b><small>LOTS</small></span></div><div className="donut-legend">{deptData.filter((item) => item.count).map((item, index) => <div key={item.department}><i className={`dot dot-${index % 5}`} /><span>{item.department}</span><b>{item.count}</b></div>)}</div></div>
-      </article>
-    </section>}
-
-    {(seesWarehouse || seesInventory) && <WarehouseSnapshot state={state} openPage={openPage} canOpen={can("Warehouse")} />}
-    {seesShops && <ShopPerformance state={state} openPage={openPage} />}
-
-    <section className="dashboard-grid lower">
-      <article className="panel live-panel"><div className="panel-head"><div><span className="eyebrow">{myDepartments.length ? "YOUR DEPARTMENT" : "FACTORY FLOOR"}</span><h3>Live lot progress</h3></div><span className="live-indicator"><i /> Live</span></div>
-        <div className="live-lots">{myLots.slice(0, 4).map((lot) => <button key={String(lot.id)} onClick={() => setModal({ type: "detail", lot })}><div className="lot-monogram">{String(lot.design_no).slice(-2)}</div><div className="live-lot-copy"><b>{String(lot.design_no)} <span>/ {String(lot.lot_no)}</span></b><small>{fmt(lot.quantity)} PCS · Current: {String(lot.current_department)}</small><Progress value={lotProgress(lot)} compact /></div><ChevronRight size={18} /></button>)}</div>
-        {!myLots.length && <Empty title="Nothing on your floor" detail="Lots appear here once they are transferred into your department." />}
-      </article>
-      <article className="panel activity-panel"><div className="panel-head"><div><span className="eyebrow">ACTIVITY</span><h3>Recent movements</h3></div></div>
-        <ActivityList rows={activity.slice(0, 5)} />
-        {!activity.length && <Empty title="No activity yet" detail="Movements in your areas show up here." />}
-      </article>
-    </section>
-  </div>;
+  return <DashboardView
+    name={user.name.split(" ")[0]} date={formatDate(dashboardToday)}
+    greeting={now.getHours() < 12 ? "Good morning" : now.getHours() < 17 ? "Good afternoon" : "Good evening"}
+    primary={primary} operations={operations} stages={stages}
+    lots={lots} attention={attention} isActive={isActive} isOverdue={isOverdue} formatDate={formatDate}
+    showLots={showLots} onPage={openPage} onLot={(lot) => setModal({ type: "detail", lot })}
+    onNewLot={can("Issue Lot") ? () => setModal({ type: "new-lot" }) : undefined}
+    onReports={can("Reports") ? () => openPage("Reports") : undefined}
+    onAllLots={can("Lot Progress") ? () => openPage("Lot Progress") : undefined}
+    activity={<section className="overview-panel overview-activity"><div className="overview-panel-heading"><div><span className="overview-kicker">LATEST UPDATES</span><h3>Recent movements</h3></div><Clock size={18} /></div>{activity.length ? <ActivityList rows={activity.slice(0, 5)} /> : <Empty title="No movements yet" detail="Activity appears as lots move through your departments." />}</section>}
+    stock={(seesWarehouse || seesInventory) ? <WarehouseSnapshot state={state} openPage={openPage} canOpen={seesWarehouse} /> : null}
+    shops={seesShops ? <ShopPerformance state={state} openPage={openPage} /> : null}
+  />;
 }
 
 const departmentCardIcon = (department: string) => department === "Embroidery" ? Flower2 : department === "Cutting" ? Scissors : department === "Stitching" ? Shirt : department === "Finishing" ? Sparkles : PackageCheck;
-const donutTones = ["#2f9e44", "#3569df", "#7753c7", "#d98516", "#15858a"];
-function donutGradient(data: Array<{ count: number }>) {
-  const total = data.reduce((sum, item) => sum + item.count, 0);
-  if (!total) return "conic-gradient(#dde5e0 0 100%)";
-  let cursor = 0;
-  const stops = data.filter((item) => item.count).map((item, index) => {
-    const start = cursor;
-    cursor += item.count / total * 100;
-    return `${donutTones[index % donutTones.length]} ${start}% ${cursor}%`;
-  });
-  return `conic-gradient(${stops.join(", ")})`;
-}
 
 function WarehouseSnapshot({ state, openPage, canOpen }: { state: FactoryState; openPage: (page: string) => void; canOpen: boolean }) {
   const rows = [...state.warehouse].sort((a, b) => number(b.balance_qty) - number(a.balance_qty)).slice(0, 6);
