@@ -842,3 +842,59 @@ tbody tr.row-selected { background: var(--green-soft) !important; }
   .tracking-table .row-actions { gap: 4px; }
   .tracking-table .row-actions > button:not(.table-action) { width: clamp(26px, 2.1vw, 32px); height: clamp(26px, 2.1vw, 32px); }
 }
+
+@media (max-width: 1279px) {
+  /* Lot Progress below the one-frame table. A 1320px table in a 375px window means reading one
+     column at a time and scrolling back to remember which lot the number belonged
+     to, so each lot becomes a card instead: identity on top, the four figures
+     paired two-up, then remarks and the actions. */
+  .tracking-table .table-scroll { overflow-x: visible; }
+  .tracking-table table { display: block; width: 100%; min-width: 0; }
+  .tracking-table thead { display: none; }
+  .tracking-table tbody { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 12px; align-items: start; }
+  .tracking-table tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    background: white;
+    overflow: hidden;
+  }
+  .tracking-table td {
+    display: block;
+    width: auto;
+    height: auto;
+    padding: 11px 14px;
+    white-space: normal;
+    text-align: left;
+    border-bottom: 1px solid #eef1f4;
+  }
+  .tracking-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 5px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+  }
+  .tracking-table td:not([data-label])::before { display: none; }
+  /* Identity, the long text and the buttons each need the full card width. */
+  .tracking-table td.lot-cell, .tracking-table td.fab-cell,
+  .tracking-table td[data-label="Remarks"], .tracking-table td.right { grid-column: 1 / -1; }
+  .tracking-table td.lot-cell { background: var(--soft); padding-block: 13px; }
+  .tracking-table td.lot-cell .table-primary { font-size: 15px; }
+  .tracking-table td[data-label="QTY"], .tracking-table td[data-label="Completed"] { border-right: 1px solid #eef1f4; }
+  .tracking-table td.fab-cell .colour-size-summary { max-width: none; -webkit-line-clamp: 3; }
+  .tracking-table .remarks-cell { max-width: none; white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .tracking-table .department-chip { display: flex; flex-wrap: wrap; }
+  .tracking-table .status { margin-top: 8px; }
+  .tracking-table .progress-wrap { margin-top: 9px; }
+  /* Thumb-sized targets, spread across the card rather than crowded right. */
+  .tracking-table td.right { border-bottom: 0; }
+  .tracking-table td.right .row-actions { justify-content: stretch; gap: 8px; }
+  .tracking-table td.right .row-actions > button:not(.table-action) { flex: 1; width: auto; height: 40px; gap: 7px; font-size: 12px; font-weight: 650; }
+  /* No hover on a touch screen, so the icon gets its name beside it. */
+  .tracking-table td.right .row-actions > button[data-touch]::after { content: attr(data-touch); }
+}
