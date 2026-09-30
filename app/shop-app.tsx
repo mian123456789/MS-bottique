@@ -8,7 +8,7 @@ import {
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  apiFetch, cx, downloadCsv, Empty, escapeHtml, Field, fmt, formatDate, initials, Modal, money, number, printDocument,
+  apiRequest, cx, downloadCsv, Empty, escapeHtml, Field, fmt, formatDate, initials, Modal, money, number, printDocument,
   readLogoFile, Row, round2, SectionHead, SessionUser, StatusBadge, today,
 } from "./shared";
 
@@ -38,6 +38,7 @@ export default function ShopApp({ shopId, user, onSignOut }: { shopId: number; u
   const [state, setState] = useState<ShopState>(emptyShopState);
   const [page, setPage] = useState("POS Billing");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [sidebar, setSidebar] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -47,18 +48,17 @@ export default function ShopApp({ shopId, user, onSignOut }: { shopId: number; u
   const scope = `scope=shop&shopId=${shopId}`;
 
   const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
     try {
-      const response = await apiFetch(`/api/factory?scope=shop&shopId=${shopId}`);
-      const data = await response.json() as ShopState & { error?: string };
+      const { response, data } = await apiRequest<ShopState & { error?: string }>(`/api/factory?scope=shop&shopId=${shopId}`);
       if (!response.ok) throw new Error(data.error || "Unable to load shop data.");
       setState(data);
-    } catch (error) { if (!silent) setToast({ type: "error", text: error instanceof Error ? error.message : "Unable to load shop data." }); }
+      setLoadError("");
+    } catch (error) { if (!silent) setLoadError(error instanceof Error ? error.message : "Unable to load shop data."); }
     finally { if (!silent) setLoading(false); }
   }, [shopId]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(null), 3600); return () => clearTimeout(id); }, [toast]);
+  useEffect(() => { if (!toast || toast.type === "error") return; const id = setTimeout(() => setToast(null), 3600); return () => clearTimeout(id); }, [toast]);
   useEffect(() => {
     const id = setInterval(() => { if (document.visibilityState === "visible") void load(true); }, 60000);
     return () => clearInterval(id);
@@ -67,8 +67,7 @@ export default function ShopApp({ shopId, user, onSignOut }: { shopId: number; u
   const post = async (payload: Record<string, unknown>) => {
     setSaving(true);
     try {
-      const response = await apiFetch(`/api/factory?${scope}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, scope: "shop", shopId }) });
-      const data = await response.json() as { error?: string; message?: string; state?: ShopState };
+      const { response, data } = await apiRequest<{ error?: string; message?: string; state?: ShopState }>(`/api/factory?${scope}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, scope: "shop", shopId }) });
       if (!response.ok) throw new Error(data.error || "Unable to save this change.");
       if (data.state) setState(data.state);
       setToast({ type: "success", text: data.message || "Saved successfully." });
@@ -84,6 +83,7 @@ export default function ShopApp({ shopId, user, onSignOut }: { shopId: number; u
   const shipments = useMemo(() => state.shopShipments.filter((row) => number(row.shop_id) === shopId), [state.shopShipments, shopId]);
 
   if (loading) return <div className="loading-view"><LoaderCircle className="spin" size={30} /><h2>Opening the shop counter…</h2><p>Loading stock, invoices and today&apos;s takings.</p></div>;
+  if (loadError) return <div className="loading-view" role="alert"><AlertTriangle size={30} /><h2>Unable to load shop data</h2><p>{loadError}</p><button className="button primary" style={{ marginTop: 16 }} onClick={() => { setLoading(true); void load(); }}>Try again</button></div>;
   if (!shop) return <div className="loading-view"><AlertTriangle size={30} /><h2>Shop not found</h2><p>This shop may have been closed. Return to the factory system and open it again.</p><Link className="button primary" href="/" style={{ marginTop: 16 }}><ArrowLeft size={16} /> Back to factory</Link></div>;
 
   const openPage = (value: string) => { setPage(value); setSidebar(false); scroller.current?.scrollTo({ top: 0, behavior: "smooth" }); };

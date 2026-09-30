@@ -12,7 +12,8 @@ export type SessionUser = {
 
 export const initials = (name: string) => name.split(" ").filter(Boolean).map((word) => word[0]).slice(0, 2).join("").toUpperCase() || "MS";
 
-export const today = "2026-08-09";
+const calendarDate = new Date();
+export const today = `${calendarDate.getFullYear()}-${String(calendarDate.getMonth() + 1).padStart(2, "0")}-${String(calendarDate.getDate()).padStart(2, "0")}`;
 export const currentPeriod = today.slice(0, 7);
 
 export const number = (value: unknown) => Number(value ?? 0);
@@ -96,20 +97,7 @@ export function exportRows(rows: Row[], filename: string) {
 // as its cacheable endpoint URL (loaded from the server) — both count as uploaded.
 export const hasUploadedLogo = (value: string) => value.startsWith("data:") || value.startsWith("/api/factory/logo");
 
-// A dropped connection surfaces as a bare "Failed to fetch". Retry once, then
-// explain what actually happened instead of leaking the browser's wording.
-export async function apiFetch(url: string, init?: RequestInit) {
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      return await fetch(url, { cache: "no-store", ...init });
-    } catch (error) {
-      lastError = error;
-      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
-    }
-  }
-  throw new Error(`Could not reach the server${lastError instanceof Error && lastError.message ? "" : ""}. Check that the app is still running, then try again.`);
-}
+export { apiRequest } from "./api-client";
 
 export const escapeHtml = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[character] || character));
 

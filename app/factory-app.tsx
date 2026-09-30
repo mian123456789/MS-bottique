@@ -8,7 +8,7 @@ import {
   Phone, Plus, Printer, ReceiptText, Route, Save, Scissors, Search, Send, Settings, ShieldCheck, Shirt,
   Receipt, ShoppingBag, Sparkles, Store, Trash2, TrendingUp, Truck, Upload, UserCog, UserPlus, Users, Wallet, Warehouse as WarehouseIcon, X,
 } from "lucide-react";
-import { apiFetch, escapeHtml, hasUploadedLogo, initials, printDocument, readLogoFile, SessionUser } from "./shared";
+import { apiRequest, today, currentPeriod, escapeHtml, hasUploadedLogo, initials, printDocument, readLogoFile, SessionUser } from "./shared";
 import DashboardView, { type DashboardMetric } from "./dashboard-view";
 import { Dispatch, FormEvent, ReactNode, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -61,8 +61,6 @@ const departmentPages = ["Embroidery", "Cutting", "Stitching", "Finishing", "Pac
 const dispatchStatuses = ["Active", "In Transit", "Shipped", "Delivered"];
 const attendanceStatuses = ["Present", "Absent", "Half Day", "Leave", "Overtime", "Holiday"];
 const employeeDepartments = ["Embroidery", "Cutting", "Stitching", "Finishing", "Packing", "Gatepass", "Warehouse", "Customer Dispatch", "Administration"];
-const today = "2026-08-09";
-const currentPeriod = today.slice(0, 7);
 // A month's day-rate uses the real length of that month, so August pays over 31
 // days and September over 30 — never a fixed working-day count.
 const daysInPeriod = (period: string) => {
@@ -154,8 +152,7 @@ export function Login({ onSignedIn }: { onSignedIn: (user: SessionUser) => void 
     if (!username.trim() || !password) return setError("Enter your username and password.");
     setBusy(true);
     try {
-      const response = await apiFetch("/api/factory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "login", username: username.trim(), password }) });
-      const data = await response.json() as { error?: string; user?: SessionUser };
+      const { response, data } = await apiRequest<{ error?: string; user?: SessionUser }>("/api/factory", { readOnly: true, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "login", username: username.trim(), password }) });
       if (!response.ok || !data.user) throw new Error(data.error || "Incorrect username or password.");
       onSignedIn(data.user);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to sign in."); }
@@ -196,7 +193,8 @@ export default function FactoryApp({ user, onSignOut }: { user: SessionUser; onS
   const landing = isOwner ? "Dashboard" : String(visibleNav.find((item) => !item.section)?.label ?? "Dashboard");
   const [page, setPage] = useState(landing);
   const [state, setState] = useState<FactoryState>(emptyState);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [sidebar, setSidebar] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
@@ -221,19 +219,18 @@ export default function FactoryApp({ user, onSignOut }: { user: SessionUser; onS
   }, []);
 
   const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
     try {
-      const response = await apiFetch("/api/factory");
-      const data = await response.json() as FactoryState & { error?: string };
+      const { response, data } = await apiRequest<FactoryState & { error?: string }>("/api/factory");
       if (!response.ok) throw new Error(data.error || "Unable to load data.");
       setState(data);
+      setLoadError("");
       raiseAlerts(data.notifications || []);
-    } catch (error) { if (!silent) setToast({ type: "error", text: error instanceof Error ? error.message : "Unable to load data." }); }
+    } catch (error) { if (!silent) setLoadError(error instanceof Error ? error.message : "Unable to load data."); }
     finally { if (!silent) setLoading(false); }
   }, [raiseAlerts]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(null), 3600); return () => clearTimeout(id); }, [toast]);
+  useEffect(() => { if (!toast || toast.type === "error") return; const id = setTimeout(() => setToast(null), 3600); return () => clearTimeout(id); }, [toast]);
   // Alerts stay live without a page refresh — but a background tab does no work.
   useEffect(() => {
     const id = setInterval(() => { if (document.visibilityState === "visible") void load(true); }, 45000);
@@ -245,8 +242,7 @@ export default function FactoryApp({ user, onSignOut }: { user: SessionUser; onS
   const post = async (payload: Record<string, unknown>) => {
     setSaving(true);
     try {
-      const response = await apiFetch("/api/factory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const data = await response.json() as { error?: string; message?: string; state?: FactoryState };
+      const { response, data } = await apiRequest<{ error?: string; message?: string; state?: FactoryState }>("/api/factory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!response.ok) throw new Error(data.error || "Unable to save this change.");
       if (data.state) { setState(data.state); raiseAlerts(data.state.notifications || []); }
       setToast({ type: "success", text: data.message || "Saved successfully." });
@@ -292,7 +288,7 @@ export default function FactoryApp({ user, onSignOut }: { user: SessionUser; onS
       </header>
       <div className="scroll-area" ref={scroller} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 320)}>
         <main className="content">
-          {loading ? <LoadingView /> : <div className="page-transition" key={page}>
+          {loading ? <LoadingView /> : loadError ? <div className="loading-view" role="alert"><AlertTriangle size={30} /><h2>Unable to load factory data</h2><p>{loadError}</p><button className="button primary" style={{ marginTop: 16 }} onClick={() => { setLoading(true); void load(); }}>Try again</button></div> : <div className="page-transition" key={page}>
             {page === "Dashboard" && <Dashboard {...pageProps} />}
             {page === "Issue Lot" && <IssueLot {...pageProps} />}
             {page === "Lot Progress" && <LotProgress {...pageProps} />}
@@ -1269,7 +1265,7 @@ function SettingsPage({ settings, onSave, saving }: { settings: Row; onSave: Pag
 }
 
 function NewLotModal({ onClose, onSave, saving, state }: { onClose: () => void; onSave: PageProps["post"]; saving: boolean; state: FactoryState }) {
-  const [form, setForm] = useState({ designNo: "", fabrication: "", quantity: "", sizeRange: "S-XL", customer: "Noor Fashion House", orderDate: today, deliveryDate: "2026-08-25", priority: "Normal", remarks: "Production approved." });
+  const [form, setForm] = useState({ designNo: "", fabrication: "", quantity: "", sizeRange: "S-XL", customer: "Noor Fashion House", orderDate: today, deliveryDate: "", priority: "Normal", remarks: "Production approved." });
   const [sizes, setSizes] = useState([{ colour: "", size: "S", quantity: "" },{ colour: "", size: "M", quantity: "" },{ colour: "", size: "L", quantity: "" },{ colour: "", size: "XL", quantity: "" }]); const [errors, setErrors] = useState<Record<string,string>>({});
   const set = (key: string, value: string) => { setForm((current) => ({ ...current, [key]: value })); setErrors((current) => ({ ...current, [key]: "" })); };
   const submit = async (event: FormEvent) => { event.preventDefault(); const next: Record<string,string> = {}; if (!form.designNo.trim()) next.designNo = "Design No. is required."; if (!form.fabrication.trim()) next.fabrication = "Fabrication is required."; if (number(form.quantity) <= 0) next.quantity = "QTY must be greater than zero."; if (!form.sizeRange.trim()) next.sizeRange = "Size Range is required."; if (form.deliveryDate < form.orderDate) next.deliveryDate = "Delivery Date cannot be before Order Date."; const sizeTotal = sizes.reduce((sum, item) => sum + number(item.quantity), 0); if (sizeTotal && sizeTotal !== number(form.quantity)) next.sizes = "Total colour / size quantity must equal lot quantity."; setErrors(next); if (Object.keys(next).length) return; await onSave({ action: "create-lot", ...form, quantity: number(form.quantity), sizes: sizes.filter((item) => number(item.quantity) > 0).map((item) => ({ colour: item.colour || "General", size: item.size || "ALL", quantity: number(item.quantity) })) }); };
@@ -1363,10 +1359,10 @@ function TransferModal({ lot, department, state, onClose, onSave, saving }: { lo
   return <Modal title={`Transfer to ${next}`} subtitle="Quantity-controlled department handoff" onClose={onClose}><form onSubmit={submit}><div className="transfer-route"><span>{departmentIcon(department)}<b>{department}</b></span><ArrowRight /><span>{departmentIcon(next)}<b>{next}</b></span></div><div className="transfer-lot"><span><small>DESIGN / LOT</small><b>{String(lot.design_no)} / {String(lot.lot_no)}</b></span><span><small>COMPLETED</small><b>{fmt(completed)} PCS</b></span><span><small>ALREADY TRANSFERRED</small><b>{fmt(transferred)} PCS</b></span><span><small>AVAILABLE NOW</small><b className="green-text">{fmt(available)} PCS</b></span></div><Field label="Transfer QTY"><input type="number" min="1" max={available} value={quantity} onChange={(e) => { setQuantity(e.target.value); setError(""); }} /></Field><Field label="Transfer Remarks"><textarea rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>{error && <div className="form-alert"><AlertTriangle size={16} />{error}</div>}<div className="confirm-copy"><CheckCircle2 size={18} /><span>Transfer <b>{fmt(quantity)} PCS</b> of Design <b>{String(lot.design_no)} / {String(lot.lot_no)}</b> from {department} to {next}?</span></div><div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving || available <= 0}>{saving && <LoaderCircle className="spin" size={16} />} Confirm Transfer</button></div></form></Modal>;
 }
 
-function RemarkModal({ lot, department, onClose, onSave, saving }: { lot: Row; department: string; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) { const [remark, setRemark] = useState(""); const [error, setError] = useState(""); return <Modal title="Add Timestamped Remark" subtitle={`${String(lot.design_no)} / ${String(lot.lot_no)} · ${department}`} onClose={onClose}><form onSubmit={async (event) => { event.preventDefault(); if (!remark.trim()) return setError("Remarks cannot be blank."); await onSave({ action: "add-remark", lotId: lot.id, department, remark }); }}><Field label="Remark" error={error}><textarea rows={5} autoFocus value={remark} onChange={(e) => { setRemark(e.target.value); setError(""); }} placeholder="Describe production progress, quality observations or transfer notes…" /></Field><div className="history-note"><FileText size={17} />This entry will be timestamped and added to the permanent remarks and audit history.</div><div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>Add Remark</button></div></form></Modal>; }
+function RemarkModal({ lot, department, onClose, onSave, saving }: { lot: Row; department: string; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) { const [remark, setRemark] = useState(""); const [error, setError] = useState(""); return <Modal title="Add Timestamped Remark" subtitle={`${String(lot.design_no)} / ${String(lot.lot_no)} · ${department}`} onClose={onClose}><form onSubmit={async (event) => { event.preventDefault(); if (!remark.trim()) return setError("Remarks cannot be blank."); await onSave({ action: "add-remark", lotId: lot.id, department, remark }); }}><Field label="Remark" error={error}><textarea rows={5} value={remark} onChange={(e) => { setRemark(e.target.value); setError(""); }} placeholder="Describe production progress, quality observations or transfer notes…" /></Field><div className="history-note"><FileText size={17} />This entry will be timestamped and added to the permanent remarks and audit history.</div><div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>Add Remark</button></div></form></Modal>; }
 
 function DispatchModal({ lot, state, onClose, onSave, saving }: { lot: Row; state: FactoryState; onClose: () => void; onSave: PageProps["post"]; saving: boolean }) {
-  const inventory = state.warehouse.find((item) => number(item.lot_id) === number(lot.id)); const available = number(inventory?.balance_qty); const invoicePrefix = String(state.settings.invoice_prefix || "INV"); const challanPrefix = String(state.settings.challan_prefix || "DC"); const [form, setForm] = useState({ quantity: String(available), cartonQty: String(Math.ceil(available / 20)), invoiceNo: `${invoicePrefix}-2026-${String(state.dispatches.length + 1).padStart(3,"0")}`, challanNo: `${challanPrefix}-2026-${String(state.dispatches.length + 1).padStart(3,"0")}`, transporter: "MS Logistics", vehicleNo: "LEA-2026", driverName: "Imran Ali", driverContact: "+92 300 000 0000", dispatchDate: "2026-08-09", destination: String(lot.destination || "Lahore"), trackingNo: `TRK-${Date.now().toString().slice(-6)}`, dispatchStatus: "In Transit", remarks: "Finished goods counted and sealed." }); const [error, setError] = useState("");
+  const inventory = state.warehouse.find((item) => number(item.lot_id) === number(lot.id)); const available = number(inventory?.balance_qty); const invoicePrefix = String(state.settings.invoice_prefix || "INV"); const challanPrefix = String(state.settings.challan_prefix || "DC"); const [form, setForm] = useState(() => ({ quantity: String(available), cartonQty: String(Math.ceil(available / 20)), invoiceNo: `${invoicePrefix}-${today.slice(0, 4)}-${String(state.dispatches.length + 1).padStart(3,"0")}`, challanNo: `${challanPrefix}-${today.slice(0, 4)}-${String(state.dispatches.length + 1).padStart(3,"0")}`, transporter: "MS Logistics", vehicleNo: "LEA-2026", driverName: "Imran Ali", driverContact: "+92 300 000 0000", dispatchDate: today, destination: String(lot.destination || "Lahore"), trackingNo: `TRK-${Date.now().toString().slice(-6)}`, dispatchStatus: "In Transit", remarks: "Finished goods counted and sealed." })); const [error, setError] = useState("");
   const submit = async (event: FormEvent) => { event.preventDefault(); if (number(form.quantity) <= 0) return setError("Dispatch QTY must be greater than zero."); if (number(form.quantity) > available) return setError("Dispatch QTY cannot be greater than Warehouse Available QTY."); if (!form.invoiceNo || !form.challanNo) return setError("Invoice No. and Delivery Challan No. are required."); await onSave({ action: "dispatch", lotId: lot.id, ...form, quantity: number(form.quantity), cartonQty: number(form.cartonQty) }); };
   return <Modal title="Create Customer Dispatch" subtitle={`${String(lot.design_no)} / ${String(lot.lot_no)} · ${String(lot.customer)}`} onClose={onClose} wide><form onSubmit={submit}><div className="warehouse-available"><WarehouseIcon /><span><small>WAREHOUSE AVAILABLE QTY</small><b>{fmt(available)} PCS</b></span><span><small>AFTER THIS DISPATCH</small><b>{fmt(Math.max(0, available - number(form.quantity)))} PCS</b></span></div><div className="form-grid three"><Field label="Dispatch QTY *"><input type="number" min="1" max={available} value={form.quantity} onChange={(e) => { setForm({ ...form, quantity: e.target.value }); setError(""); }} /></Field><Field label="Carton QTY"><input type="number" min="0" value={form.cartonQty} onChange={(e) => setForm({ ...form, cartonQty: e.target.value })} /></Field><Field label="Dispatch Date"><input type="date" value={form.dispatchDate} onChange={(e) => setForm({ ...form, dispatchDate: e.target.value })} /></Field><Field label="Invoice No. *"><input value={form.invoiceNo} onChange={(e) => setForm({ ...form, invoiceNo: e.target.value })} /></Field><Field label="Delivery Challan No. *"><input value={form.challanNo} onChange={(e) => setForm({ ...form, challanNo: e.target.value })} /></Field><Field label="Tracking / Reference No."><input value={form.trackingNo} onChange={(e) => setForm({ ...form, trackingNo: e.target.value })} /></Field><Field label="Transporter"><input value={form.transporter} onChange={(e) => setForm({ ...form, transporter: e.target.value })} /></Field><Field label="Vehicle No."><input value={form.vehicleNo} onChange={(e) => setForm({ ...form, vehicleNo: e.target.value })} /></Field><Field label="Destination"><input value={form.destination} onChange={(e) => setForm({ ...form, destination: e.target.value })} /></Field><Field label="Driver Name"><input value={form.driverName} onChange={(e) => setForm({ ...form, driverName: e.target.value })} /></Field><Field label="Driver Contact"><input value={form.driverContact} onChange={(e) => setForm({ ...form, driverContact: e.target.value })} /></Field><Field label="Inventory Dispatch Status"><select value={form.dispatchStatus} onChange={(e) => setForm({ ...form, dispatchStatus: e.target.value })}>{dispatchStatuses.filter((item) => item !== "Active").map((item) => <option key={item}>{item}</option>)}</select></Field><Field label="Remarks" span><input value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} /></Field></div>{error && <div className="form-alert"><AlertTriangle size={16} />{error}</div>}<div className="confirm-copy"><Truck size={18} /><span>Inventory and every stock report will show this lot as <b>{form.dispatchStatus}</b>. You can move it to Shipped or Delivered later from Inventory.</span></div><div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>{saving && <LoaderCircle className="spin" size={16} />} Confirm Customer Dispatch <Truck size={16} /></button></div></form></Modal>;
 }

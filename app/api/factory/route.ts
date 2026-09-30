@@ -579,7 +579,7 @@ async function getState(scope: Scope = { kind: "factory" }) {
 }
 
 function bad(error: string, status = 400) {
-  return Response.json({ error }, { status });
+  return Response.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
 export async function GET(request: Request) {
@@ -600,9 +600,14 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    let body: Record<string, unknown>;
+    try {
+      const parsed: unknown = await request.json();
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return bad("Request must be a JSON object.");
+      body = parsed as Record<string, unknown>;
+    } catch { return bad("Request contains invalid JSON. Please reload the form and try again."); }
     await ensureDatabase();
     const db = getD1();
-    const body = await request.json() as Record<string, unknown>;
     const action = String(body.action ?? "");
 
     if (action === "login") {
