@@ -579,6 +579,9 @@ async function getState(scope: Scope = { kind: "factory" }) {
 }
 
 function bad(error: string, status = 400) {
+  // Recorded so a refused request can be told apart from one the hosting layer
+  // blocked before it ever reached the application.
+  console.warn(`[MS Boutique] refused ${status}: ${error}`);
   return Response.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
@@ -609,6 +612,7 @@ export async function POST(request: Request) {
     await ensureDatabase();
     const db = getD1();
     const action = String(body.action ?? "");
+    console.log(`[MS Boutique] POST ${action || "(no action)"}`);
 
     if (action === "login") {
       const username = String(body.username ?? "").trim();
