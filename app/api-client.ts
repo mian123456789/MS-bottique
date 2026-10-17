@@ -28,6 +28,8 @@ function responseMessage(status: number, saving: boolean) {
 }
 
 async function parseResponse(response: Response, saving: boolean): Promise<Record<string, unknown>> {
+  // 304 means "nothing changed"; there is no body to read and nothing to apply.
+  if (response.status === 304) return {};
   const text = await response.text();
   let data: unknown;
   try { data = JSON.parse(text); } catch {

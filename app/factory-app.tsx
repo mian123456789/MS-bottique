@@ -142,41 +142,6 @@ function Empty({ title, detail }: { title: string; detail: string }) {
   return <div className="empty-state"><div><PackageOpen size={27} /></div><h3>{title}</h3><p>{detail}</p></div>;
 }
 
-export function Login({ onSignedIn }: { onSignedIn: (user: SessionUser) => void }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!username.trim() || !password) return setError("Enter your username and password.");
-    setBusy(true);
-    try {
-      const { response, data } = await apiRequest<{ error?: string; user?: SessionUser }>("/api/factory", { readOnly: true, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "login", username: username.trim(), password }) });
-      if (!response.ok || !data.user) throw new Error(data.error || "Incorrect username or password.");
-      onSignedIn(data.user);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to sign in."); }
-    finally { setBusy(false); }
-  };
-  return <main className="login-page">
-    <section className="login-brand">
-      <div className="brand-pill"><span className="logo-mark">MS</span><span>MS Boutique</span></div>
-      <div className="login-copy"><span className="eyebrow light">FACTORY OPERATIONS, CONNECTED</span><h1>One design.<br />Every department.<br /><em>Complete control.</em></h1><p>Track every production lot from issue to customer dispatch without losing a single piece.</p></div>
-      <div className="workflow-ribbon">{workflow.slice(0, 8).map((item, index) => <span key={item}>{item}{index < 7 && <ArrowRight size={14} />}</span>)}</div>
-    </section>
-    <section className="login-panel">
-      <form className="login-card" onSubmit={submit}>
-        <div className="mobile-login-brand"><span className="logo-mark">MS</span><b>MS Boutique</b></div>
-        <span className="eyebrow">WELCOME BACK</span><h2>Sign in</h2><p className="muted">Factory staff and shop counters sign in with the account the owner set up.</p>
-        <Field label="Username"><div className="input-icon"><UserCog size={17} /><input autoComplete="username" placeholder="Your username" value={username} onChange={(e) => { setUsername(e.target.value); setError(""); }} /></div></Field>
-        <Field label="Password"><div className="input-icon"><LockKeyhole size={17} /><input type="password" autoComplete="current-password" placeholder="Your password" value={password} onChange={(e) => { setPassword(e.target.value); setError(""); }} /></div></Field>
-        {error && <div className="login-error"><AlertTriangle size={16} />{error}</div>}
-        <button className="button primary login-button" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : null} Sign in <ArrowRight size={17} /></button>
-      </form>
-      <p className="login-footer">MS Boutique © 2026 – Factory Management System</p>
-    </section>
-  </main>;
-}
 
 type ModalState = { type: string; lot?: Row; department?: string; record?: Row; customer?: Row; receipt?: Row; gatepass?: Row; employee?: Row } | null;
 type Alert = { id: number; title: string; message: string; level: string; category: string; actor: string; link: string };
@@ -207,6 +172,7 @@ export default function FactoryApp({ user, onSignOut }: { user: SessionUser; onS
   const seenAlerts = useRef<Set<number>>(new Set());
 
   // Any unread alert the owner has not been shown yet is raised as a banner.
+  const stateTag = useRef("");
   const raiseAlerts = useCallback((rows: Row[]) => {
     const fresh = rows.filter((row) => !number(row.read) && !seenAlerts.current.has(number(row.id)));
     if (!fresh.length) return;
@@ -220,8 +186,13 @@ export default function FactoryApp({ user, onSignOut }: { user: SessionUser; onS
 
   const load = useCallback(async (silent = false) => {
     try {
-      const { response, data } = await apiRequest<FactoryState & { error?: string }>("/api/factory");
+      // The tag from the last load lets an unchanged poll return empty: no parsing,
+      // no new state object, and so no re-render of the whole screen every 45s.
+      const headers = stateTag.current ? { "If-None-Match": stateTag.current } : undefined;
+      const { response, data } = await apiRequest<FactoryState & { error?: string }>("/api/factory", { headers });
+      if (response.status === 304) { setLoadError(""); return; }
       if (!response.ok) throw new Error(data.error || "Unable to load data.");
+      stateTag.current = response.headers.get("etag") || "";
       setState(data);
       setLoadError("");
       raiseAlerts(data.notifications || []);
@@ -244,7 +215,7 @@ export default function FactoryApp({ user, onSignOut }: { user: SessionUser; onS
     try {
       const { response, data } = await apiRequest<{ error?: string; message?: string; state?: FactoryState }>("/api/factory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!response.ok) throw new Error(data.error || "Unable to save this change.");
-      if (data.state) { setState(data.state); raiseAlerts(data.state.notifications || []); }
+      if (data.state) { stateTag.current = ""; setState(data.state); raiseAlerts(data.state.notifications || []); }
       setToast({ type: "success", text: data.message || "Saved successfully." });
       setModal(null);
       return true;
@@ -834,14 +805,15 @@ function NotificationInbox({ state, post, saving, onClose }: { state: FactorySta
       <div className="inbox-tools">
         <label className="toggle-field"><input type="checkbox" checked={onlyUnread} onChange={(event) => setOnlyUnread(event.target.checked)} /><span>Unread only</span></label>
         <button className="link-button" disabled={saving || !unread} onClick={() => void post({ action: "mark-notifications-read" })}><Check size={14} /> Mark all read</button>
+        <button className="link-button danger" disabled={saving || !state.notifications.length} onClick={() => { if (confirm("Clear all notifications? They will not come back.")) void post({ action: "clear-notifications" }); }}><Trash2 size={14} /> Clear all</button>
       </div>
       <div className="inbox-list">
         {rows.map((item) => <article key={String(item.id)} className={cx(!number(item.read) && "unread", `level-${String(item.level || "info")}`)}>
           <span className="inbox-icon">{icon(String(item.level || "info"))}</span>
           <div><b>{String(item.title)}</b><p>{String(item.message)}</p><small>{formatDate(item.created_at, true)} · {String(item.actor_name || "System")} · {String(item.category || "Factory")}</small></div>
-          {!number(item.read) && <button className="inbox-read" title="Mark read" aria-label="Mark read" disabled={saving} onClick={() => void post({ action: "mark-notifications-read", notificationId: item.id })}><Check size={14} /></button>}
+          <span className="inbox-row-actions">{!number(item.read) && <button className="inbox-read" title="Mark read" aria-label="Mark read" disabled={saving} onClick={() => void post({ action: "mark-notifications-read", notificationId: item.id })}><Check size={14} /></button>}<button className="inbox-clear" title="Clear this notification" aria-label="Clear this notification" disabled={saving} onClick={() => void post({ action: "clear-notifications", notificationId: item.id })}><X size={14} /></button></span>
         </article>)}
-        {!rows.length && <p className="inbox-empty">Nothing here yet. Alerts appear as departments and shops record activity.</p>}
+        {!rows.length && <p className="inbox-empty">{onlyUnread ? "Nothing unread." : "No notifications. Alerts appear as departments and shops record activity."}</p>}
       </div>
     </section>
   </>;

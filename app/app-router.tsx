@@ -2,9 +2,16 @@
 
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import FactoryApp, { Login } from "./factory-app";
+import dynamic from "next/dynamic";
+import { Login } from "./login";
 import { apiRequest, SessionUser } from "./shared";
-import ShopApp from "./shop-app";
+
+// Factory staff never open the point of sale and shop counters never open the
+// factory, so neither is part of the first download, and the sign-in screen
+// carries neither of them at all.
+const loading = () => <div className="loading-view"><LoaderCircle className="spin" size={30} /><h2>Opening your workspace…</h2><p>One moment.</p></div>;
+const FactoryApp = dynamic(() => import("./factory-app"), { loading, ssr: false });
+const ShopApp = dynamic(() => import("./shop-app"), { loading, ssr: false });
 
 // The signed-in account decides what opens: a shop login always lands on its own
 // counter, while the owner and factory staff get the factory system — and the

@@ -898,3 +898,14 @@ tbody tr.row-selected { background: var(--green-soft) !important; }
   /* No hover on a touch screen, so the icon gets its name beside it. */
   .tracking-table td.right .row-actions > button[data-touch]::after { content: attr(data-touch); }
 }
+
+/* Inbox row controls: mark read, and clear for good. */
+.inbox-row-actions { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.inbox-clear { display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: #93a0ae; cursor: pointer; }
+.inbox-clear:hover { background: #fdeceb; color: #b4453a; }
+.link-button.danger { color: #b4453a; }
+.link-button.danger:hover { color: #8e3630; }
+.link-button:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 800px) {
+  .inbox-clear { width: 32px; height: 32px; }
+}

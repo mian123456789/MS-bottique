@@ -595,7 +595,13 @@ export async function GET(request: Request) {
     // refused, and anything else is simply narrowed to the shop it belongs to.
     if (session.role === "Shop" && requested.kind === "shop" && requested.shopId !== session.shopId) return bad("This account belongs to a different shop.", 403);
     const scope: Scope = session.role === "Shop" ? { kind: "shop", shopId: session.shopId } : requested;
-    return Response.json(await getState(scope), { headers: { "Cache-Control": "no-store" } });
+    // Most polls find nothing new. Tagging the payload lets an unchanged one come
+    // back empty, so the browser skips parsing and re-rendering the whole factory.
+    const payload = JSON.stringify(await getState(scope));
+    const tag = `W/"${await sha256Hex(payload)}"`;
+    const headers = { "Cache-Control": "no-store", ETag: tag };
+    if (request.headers.get("if-none-match") === tag) return new Response(null, { status: 304, headers });
+    return new Response(payload, { status: 200, headers: { ...headers, "Content-Type": "application/json" } });
   } catch (error) {
     return bad(error instanceof Error ? error.message : "Unable to load factory data.", 500);
   }
@@ -792,6 +798,15 @@ export async function POST(request: Request) {
         db.prepare("INSERT INTO audit_logs (user_id,department_id,action,previous_value,new_value,remarks,created_at) VALUES (1,1,'Customer Updated',?,?,'Customer master record updated',?)").bind(JSON.stringify(previous), JSON.stringify({ name, contact, destination }), timestamp),
       ]);
       return Response.json({ ok: true, message: `${name} updated.`, state: await state() });
+    }
+
+    // Clearing removes the alert for good. Marking read only silences the banner,
+    // so a cleared inbox used to fill straight back up on the next load.
+    if (action === "clear-notifications") {
+      const notificationId = Number(body.notificationId ?? 0);
+      if (notificationId) await db.prepare("DELETE FROM notifications WHERE id=?").bind(notificationId).run();
+      else await db.prepare("DELETE FROM notifications").run();
+      return Response.json({ ok: true, message: notificationId ? "Notification cleared." : "All notifications cleared.", state: await state() });
     }
 
     if (action === "mark-notifications-read") {
